@@ -1,21 +1,12 @@
 import time
 import random
-import pyrealsense2 as rs
-
-import numpy as np
 from typing import Union
+import threading
 
-class Sensor:
-    def __init__(self):
-        pass
-    def start(self):
-        pass
-    def close(self):
-        pass
-    def read(self)->Union[dict, None]:
-        pass
+import pyrealsense2 as rs
+import numpy as np
 
-class RealSense(Sensor):
+class RealSense():
     '''
     Intrinsic of "Color" / 640x480 / {YUYV/RGB8/BGR8/RGBA8/BGRA8/Y8}
     Width:      	640
@@ -29,32 +20,50 @@ class RealSense(Sensor):
     FOV (deg):  	79.2 x 63.69
     '''
     def __init__(self, config):
-        self.pipeline = rs.pipeline()
-        self.config = rs.config()
+        self._pipeline = rs.pipeline()
+        self._config = rs.config()
         h = config['height']
         w = config['width']
         fps = config['fps']
-        self.config.enable_stream(rs.stream.color, w, h, rs.format.bgr8, fps)
-        self.config.enable_stream(rs.stream.depth, w, h, rs.format.z16, fps)        
-        self.pipeline_started = False
+        self._config.enable_stream(rs.stream.color, w, h, rs.format.bgr8, fps)
+        self._config.enable_stream(rs.stream.depth, w, h, rs.format.z16, fps)        
+        self._pipeline_started = False
+        
+        self._queue = threading.Queue()
+        self._thread = None
+        self._stop_event = threading.Event()
 
     def start(self):
+        # start the sensor in the thread
+        print("Starting RealSense sensor...")
+        self._thread = threading.Thread(target=self._run, args=(None, self._stop_event))
+        self._thread.start()
+
+    def get(self):
+        return self._queue.get()
+    
+    def stop(self):
+        self._stop_event.set()
+        self._pipeline.stop()
+        self._pipeline_started = False
+        print("RealSense sensor stopped.")
+    
+    def _run(self, stop_event):
         try:
-            self.pipeline.start(self.config)
-            self.pipeline_started = True
+            self._pipeline.start(self._config)
+            self._pipeline_started = True
             print("RealSense sensor started.")
         except Exception as e:
             print("Failed to start RealSense sensor.")
             print(e)
 
-    def read(self):
-        if self.pipeline_started:
+        while not stop_event.is_set():
             try:
-                frames = self.pipeline.wait_for_frames()
+                frames = self._pipeline.wait_for_frames()
             except Exception as e:
                 print("Failed to read RealSense sensor.")
                 print(e)
-                return None
+                return
             
             timestamp = time.time()
             color_frame = frames.get_color_frame()
@@ -66,31 +75,9 @@ class RealSense(Sensor):
             color_image = np.asanyarray(color_frame.get_data())
             depth_image = np.asanyarray(depth_frame.get_data())
 
-            return {
+            self._queue.put({
                 "timestamp": timestamp,
                 "color": color_image,
                 "depth": depth_image
-            }
-        
-        else:
-            return None
+            })
 
-    def close(self):
-        if self.pipeline_started:
-            self.pipeline.stop()
-            self.pipeline_started = False
-            print("RealSense sensor closed.")
-
-def sensor_thread(q, s, sensor: Sensor, max_size: int = 3, freq: float = 1):
-    sensor.start()
-    tic = time.time()
-    while not s.is_set() and sensor.pipeline_started:
-        if time.time() - tic < 1/freq:
-            time.sleep(1/freq - (time.time() - tic))
-            continue
-        tic = time.time()
-        q.put(sensor.read())
-        if q.qsize() > max_size:
-            q.get()
-    sensor.close()
-    return
