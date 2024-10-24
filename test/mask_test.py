@@ -26,19 +26,16 @@ def main():
     mp.set_start_method('spawn')
     tracker_process = MaskTrackerProcess(config['mask_tracker'])
     tracker_process.start()
-    time.sleep(3)
-
 
     while True:
         data = None
         while data is None:
             data = rs.get()
-        tracker_process.send(data)
+        tracker_process.send(data['color'])
         mask = tracker_process.get()
 
         # exlude the background 0
-        objects = torch.unique(mask)[1:].tolist()
-        mask = mask.cpu().numpy()
+        objects = np.unique(mask)
         bgr = data['color']
 
         for obj in objects:

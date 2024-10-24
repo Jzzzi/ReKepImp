@@ -46,6 +46,14 @@ class RealSense():
         self._thread.start()
 
     def get(self):
+        '''
+        return a dict
+        {
+            "timestamp": float,
+            "color": np.ndarray, [H, W, 3], BGR
+            "depth": np.ndarray, [H, W], z16
+        }
+        '''
         try:
             return self._queue.get(timeout=1)
         except:

@@ -4,9 +4,6 @@ import yaml
 import sys
 import os
 import cv2
-import cv2 as cv
-import numpy as np
-import time
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from utils.sensor import RealSense
@@ -22,8 +19,8 @@ def main():
     while True:
         data = rs.get()
         color = data['color']
-        cv.imshow('color', color)
-        key = cv.waitKey(1)
+        cv2.imshow('color', color)
+        key = cv2.waitKey(1)
         if key == ord('q'):
             break
     rs.stop()

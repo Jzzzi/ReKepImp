@@ -6,8 +6,6 @@ import torch
 import numpy as np
 import cv2
 
-sys.path.append(os.path.join(os.path.dirname(__file__), "cutie"))
-
 from cutie.inference.inference_core import InferenceCore
 from cutie.utils.get_default_model import get_default_model
 
@@ -28,7 +26,10 @@ class MaskTrackerProcess():
         self._data_queue = mp.Queue()
         self._mask_queue = mp.Queue()
         self._stop_event = mp.Event()
+        self.__sam_done_event = mp.Event()
         self._num_objects = config['num_objects']
+        self._path = config['path']
+        self._device = config['device']
         self._process = None
         self._segmented = False
         self._mask = None
@@ -38,26 +39,29 @@ class MaskTrackerProcess():
 
     def start(self):
         print("Starting mask tracker process...")
-        self.process = mp.Process(target=self._run)
-        self.process.start()
+        self._process = mp.Process(target=self._run)
+        self._process.start()
 
     def stop(self):
         print("Stopping mask tracker process...")
         self._stop_event.set()
-        self.process.join()
+        self._process.join()
         print("Mask tracker process stopped.")
     
     def send(self, data):
         '''
-        Send data to the mask tracker process.
+        Send data as np.ndarray, [H, W, 3], BGR
         '''
         self._data_queue.put(data)
 
-    def get(self):
+    def get(self)->np.ndarray:
         '''
-        Get the mask from the mask tracker process.
+        Return the mask as np.ndarray, [H, W], uint8
         '''
         return self._mask_queue.get()
+    
+    def sam_done(self)->bool:
+        return self.__sam_done_event.is_set()
     
     def _run(self):
         print("Mask tracker process started.")
@@ -65,12 +69,12 @@ class MaskTrackerProcess():
             try:
                 data = self._data_queue.get(timeout=1)
             except:
-                print(YELLOW + f"No data received in 1 seconds." + RESET)
+                # print(YELLOW + f"[MaskTracker]: No data received in 1 seconds." + RESET)
                 continue
             if not self._segmented:
                 # Use the first frame to generate masks by SAM
                 assert data is not None, "Data is None."
-                bgr = data['color']
+                bgr = data
                 rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
                 masks = self._get_sam_mask(rgb)
                 self._num_objects = min(self._num_objects, len(masks))
@@ -81,12 +85,13 @@ class MaskTrackerProcess():
                     self._mask[masks[i]>0] = i + 1
                 
                 self._init_cutie(rgb)
-                self._mask_queue.put(self._mask)
+                self._mask_queue.put(self._mask.cpu().numpy())
                 self._segmented = True
 
             else:
                 # Use Cutie to track the masks
                 self._track(data)
+        return
 
     @torch.inference_mode()
     @torch.amp.autocast('cuda')
@@ -104,11 +109,10 @@ class MaskTrackerProcess():
         print('Initializing the mask generator...')
         from segment_anything import sam_model_registry, SamAutomaticMaskGenerator
         # sam model initialization
-        sam_checkpoint = os.path.join((os.path.dirname(__file__)), "model", "sam_vit_h_4b8939.pth")
+        sam_checkpoint = os.path.join(self._path, "model", "sam_vit_h_4b8939.pth")
         model_type = "vit_h"
-        device = "cuda"
         sam = sam_model_registry[model_type](checkpoint=sam_checkpoint)
-        sam.to(device=device)
+        sam.to(device=self._device)
         mask_generator = SamAutomaticMaskGenerator(sam)
 
         print('Generating masks...')
@@ -116,6 +120,7 @@ class MaskTrackerProcess():
         # sorted by te predicted_iou
         print('Sorting masks...')
         masks = sorted(masks, key=lambda x: x['predicted_iou'], reverse=True)
+        self.__sam_done_event.set()
         return masks
 
     @torch.inference_mode()
@@ -132,7 +137,7 @@ class MaskTrackerProcess():
     @torch.amp.autocast('cuda')
     def _track(self, data):
         # Track the following frames
-        bgr = data['color']
+        bgr = data
         rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
         rgb_tensor = to_tensor(rgb).cuda().float()/255
 
@@ -140,5 +145,5 @@ class MaskTrackerProcess():
 
         output_prob = self._processor.step(rgb_tensor)
         mask = self._processor.output_prob_to_mask(output_prob)
-
+        mask = mask.cpu().numpy()
         self._mask_queue.put(mask)
