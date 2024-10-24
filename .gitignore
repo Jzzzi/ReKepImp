@@ -1,0 +1,6 @@
+# ignore all under data folder
+*.pth
+*.mp4
+*.jpg
+*.png
+*.pyc
