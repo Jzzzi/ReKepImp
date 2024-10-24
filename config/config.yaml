@@ -17,4 +17,7 @@ realsense:
   height: 480
   width: 640
   fps: 30
+  max_queue_size: 3
 
+mask_tracker:
+  num_objects: 5

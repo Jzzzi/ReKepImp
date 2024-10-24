@@ -21,11 +21,14 @@ def to_tensor(img:np.ndarray)->torch.Tensor:
     return torch.from_numpy(img.transpose(2, 0, 1)).float().contiguous()
 
 class MaskTrackerProcess():
-    def __init__(self, num_objects=10):
+    def __init__(self, config):
+        '''
+        Set mp.set_start_method('spawn') in the main process.
+        '''
         self._data_queue = mp.Queue()
         self._mask_queue = mp.Queue()
         self._stop_event = mp.Event()
-        self._num_objects = num_objects
+        self._num_objects = config['num_objects']
         self._process = None
         self._segmented = False
         self._mask = None

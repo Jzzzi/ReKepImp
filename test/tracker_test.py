@@ -11,31 +11,28 @@ import torch
 import numpy as np
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-from utils.sensor import RealSense, sensor_thread
+from utils.sensor import RealSense
 from mask_tracker import MaskTrackerProcess
 
 def main():
     with open("./config/config.yaml", "r") as f:
         config = yaml.safe_load(f)
 
-    realsense_config = config["realsense"]
 
-    sensor = RealSense(realsense_config)
-
-    realsense_stream = queue.Queue()
-    realsense_event = th.Event()
-    realsense_thread = th.Thread(target=sensor_thread, args=(realsense_stream, realsense_event, sensor, 5, 10))
-    realsense_thread.start()
+    rs = RealSense(config['realsense'])
+    rs.start()
 
 
     mp.set_start_method('spawn')
-    tracker_process = MaskTrackerProcess(2)
+    tracker_process = MaskTrackerProcess(config['mask_tracker'])
     tracker_process.start()
     time.sleep(3)
 
 
     while True:
-        data = realsense_stream.get()
+        data = None
+        while data is None:
+            data = rs.get()
         tracker_process.send(data)
         mask = tracker_process.get()
 
@@ -53,9 +50,8 @@ def main():
         cv2.imshow("Mask", bgr)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
-            
-    realsense_event.set()
-    realsense_thread.join()
+
+    rs.stop()            
     tracker_process.stop()
 
 if __name__ == "__main__":

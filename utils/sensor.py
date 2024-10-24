@@ -2,9 +2,15 @@ import time
 import random
 from typing import Union
 import threading
+import queue
 
 import pyrealsense2 as rs
 import numpy as np
+
+RESET = "\033[0m"
+RED = "\033[31m"
+GREEN = "\033[32m"
+YELLOW = "\033[33m"
 
 class RealSense():
     '''
@@ -25,45 +31,47 @@ class RealSense():
         h = config['height']
         w = config['width']
         fps = config['fps']
+        self._max_queue_size = config['max_queue_size']
         self._config.enable_stream(rs.stream.color, w, h, rs.format.bgr8, fps)
         self._config.enable_stream(rs.stream.depth, w, h, rs.format.z16, fps)        
-        self._pipeline_started = False
         
-        self._queue = threading.Queue()
+        self._queue = queue.Queue()
         self._thread = None
         self._stop_event = threading.Event()
 
     def start(self):
         # start the sensor in the thread
         print("Starting RealSense sensor...")
-        self._thread = threading.Thread(target=self._run, args=(None, self._stop_event))
+        self._thread = threading.Thread(target=self._run)
         self._thread.start()
 
     def get(self):
-        return self._queue.get()
+        try:
+            return self._queue.get(timeout=1)
+        except:
+            print(YELLOW + "Failed to get RealSense data within 1 second." + RESET)
+            return None
     
     def stop(self):
+        print("Stopping RealSense sensor...")
         self._stop_event.set()
-        self._pipeline.stop()
-        self._pipeline_started = False
-        print("RealSense sensor stopped.")
+        self._thread.join()
+        print("RealSense stopped.")
     
-    def _run(self, stop_event):
+    def _run(self):
+        print("RealSense started.")
         try:
             self._pipeline.start(self._config)
-            self._pipeline_started = True
-            print("RealSense sensor started.")
         except Exception as e:
             print("Failed to start RealSense sensor.")
             print(e)
 
-        while not stop_event.is_set():
+        while not self._stop_event.is_set():
             try:
                 frames = self._pipeline.wait_for_frames()
             except Exception as e:
-                print("Failed to read RealSense sensor.")
                 print(e)
-                return
+                continue
             
             timestamp = time.time()
             color_frame = frames.get_color_frame()
@@ -80,4 +88,9 @@ class RealSense():
                 "color": color_image,
                 "depth": depth_image
             })
+
+            if self._queue.qsize() > self._max_queue_size:
+                self._queue.get()
+
+        self._pipeline.stop()
 
