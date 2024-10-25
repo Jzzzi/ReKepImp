@@ -38,14 +38,14 @@ class KeypointTrackerProcess():
 
     def start(self):
         self._process = mp.Process(target=self._run)
-        print("Starting keypoint tracker process")
+        print(GREEN+"[KeypointTracker]: Starting keypoint tracker process"+RESET)
         self._process.start()
 
     def stop(self):
-        print("Stopping keypoint tracker process")
+        print(GREEN+"[KeypointTracker]: Stopping keypoint tracker process"+RESET)
         self._stop_event.set()
         self._process.join()
-        print("Keypoint tracker process stopped")
+        print(GREEN+"[KeypointTracker]: Keypoint tracker process stopped"+RESET)
 
     def send(self, data):
         '''

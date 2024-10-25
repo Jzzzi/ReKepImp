@@ -35,18 +35,18 @@ class MaskTrackerProcess():
         self._mask = None
         self._processor = None
         self._objects = None
-        print("Mask tracker process initialized.")
+        print(GREEN + f"[MaskTracker]: Mask tracker process initialized." + RESET)
 
     def start(self):
-        print("Starting mask tracker process...")
+        print(GREEN + f"[MaskTracker]: Starting mask tracker process..." + RESET)
         self._process = mp.Process(target=self._run)
         self._process.start()
 
     def stop(self):
-        print("Stopping mask tracker process...")
+        print(GREEN + f"[MaskTracker]: Stopping mask tracker process..." + RESET)
         self._stop_event.set()
         self._process.join()
-        print("Mask tracker process stopped.")
+        print(GREEN + f"[MaskTracker]: Mask tracker process stopped." + RESET)
     
     def send(self, data):
         '''
