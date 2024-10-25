@@ -44,6 +44,8 @@ class MaskTrackerProcess():
 
     def stop(self):
         print(GREEN + f"[MaskTracker]: Stopping mask tracker process..." + RESET)
+        self._data_queue.close()
+        self._mask_queue.close()
         self._stop_event.set()
         self._process.join()
         print(GREEN + f"[MaskTracker]: Mask tracker process stopped." + RESET)

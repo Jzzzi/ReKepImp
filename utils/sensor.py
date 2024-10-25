@@ -41,9 +41,10 @@ class RealSense():
 
     def start(self):
         # start the sensor in the thread
-        print("Starting RealSense sensor...")
+        print(GREEN + "[RealSense]: Starting RealSense sensor..." + RESET)
         self._thread = threading.Thread(target=self._run)
         self._thread.start()
+        print(GREEN + "[RealSense]: RealSense sensor started." + RESET)
 
     def get(self):
         '''
@@ -57,21 +58,20 @@ class RealSense():
         try:
             return self._queue.get(timeout=1)
         except:
-            print(YELLOW + "Failed to get RealSense data within 1 second." + RESET)
+            print(YELLOW + "[RealSense]: Failed to get RealSense data within 1 second." + RESET)
             return None
     
     def stop(self):
-        print("Stopping RealSense sensor...")
+        print(GREEN + "[RealSense]: Stopping RealSense sensor..." + RESET)
         self._stop_event.set()
         self._thread.join()
-        print("RealSense stopped.")
-    
+        print(GREEN + "[RealSense]: RealSense sensor stopped." + RESET)    
+
     def _run(self):
-        print("RealSense started.")
         try:
             self._pipeline.start(self._config)
         except Exception as e:
-            print("Failed to start RealSense sensor.")
+            print(RED + "[RealSense]: Failed to start the pipeline." + RESET)
             print(e)
 
         while not self._stop_event.is_set():

@@ -37,17 +37,24 @@ def main():
     if mask_tracker.sam_done():
         keypoint_tracker.start()
 
-    data = None
-    while data is None:
-        data = rs.get()
-    mask_tracker.send(data['color'])
-    mask = mask_tracker.get()
-    points = get_cam_points(data['depth'], config['realsense']['instrinsics'])
     keypoint_tracker.send({
         'rgb': cv2.cvtColor(data['color'], cv2.COLOR_BGR2RGB),
-        'points': points,
+        'points': get_cam_points(data['depth'], config['realsense']['instrinsics']),
         'masks': mask,
     })
+    keypoint_tracker.get()
+
+    # data = None
+    # while data is None:
+    #     data = rs.get()
+    # mask_tracker.send(data['color'])
+    # mask = mask_tracker.get()
+    # points = get_cam_points(data['depth'], config['realsense']['instrinsics'])
+    # keypoint_tracker.send({
+    #     'rgb': cv2.cvtColor(data['color'], cv2.COLOR_BGR2RGB),
+    #     'points': points,
+    #     'masks': mask,
+    # })
     # keypoint_tracker.get()
     # cv2.imshow("Keypoints", projected)
     # cv2.waitKey(0)
@@ -55,7 +62,7 @@ def main():
     rs.stop()
     mask_tracker.stop()
     keypoint_tracker.stop()
-    exit()
+    # exit()
 
 if __name__ == "__main__":
     main()

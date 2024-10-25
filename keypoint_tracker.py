@@ -43,6 +43,8 @@ class KeypointTrackerProcess():
 
     def stop(self):
         print(GREEN+"[KeypointTracker]: Stopping keypoint tracker process"+RESET)
+        self._data_queue.close()
+        self._result_queue.close()
         self._stop_event.set()
         self._process.join()
         print(GREEN+"[KeypointTracker]: Keypoint tracker process stopped"+RESET)

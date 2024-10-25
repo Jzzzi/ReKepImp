@@ -17,7 +17,9 @@ def main():
     rs.start()
 
     while True:
-        data = rs.get()
+        data = None
+        while data is None:
+            data = rs.get()
         color = data['color']
         cv2.imshow('color', color)
         key = cv2.waitKey(1)
