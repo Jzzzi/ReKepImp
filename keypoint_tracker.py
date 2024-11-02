@@ -26,6 +26,8 @@ class KeypointTrackerProcess():
         self._bounds_max = np.array(self._config['bounds_max'])
         self._mean_shift = MeanShift(bandwidth=self._config['min_dist_bt_keypoints'], bin_seeding=True, n_jobs=32)
         self._patch_size = 14  # dinov2
+        self._keypoint_features = None
+        self.track_type = "last_frame"
         np.random.seed(self._config['seed'])
         torch.manual_seed(self._config['seed'])
         torch.cuda.manual_seed(self._config['seed'])
@@ -46,7 +48,7 @@ class KeypointTrackerProcess():
         self._data_queue.close()
         self._result_queue.close()
         self._stop_event.set()
-        self._process.join()
+        self._process.terminate()
         print(GREEN+"[KeypointTracker]: Keypoint tracker process stopped"+RESET)
 
     def send(self, data):
@@ -88,33 +90,39 @@ class KeypointTrackerProcess():
 
     def _get_keypoints(self, rgb, points, masks):
         # preprocessing
-        transformed_rgb, rgb, points, masks, shape_info = self._preprocess(rgb, points, masks)
+        transformed_rgb, rgb, points, shape_info = self._preprocess(rgb, points)
         # get features
-        features_flat = self._get_features(transformed_rgb, shape_info)
-        # for each mask, cluster in feature space to get meaningful regions, and uske their centers as keypoint candidates
-        candidate_keypoints, candidate_pixels, candidate_rigid_group_ids = self._cluster_features(points, features_flat, masks)
-        # exclude keypoints that are outside of the workspace
-        within_space = filter_points_by_bounds(candidate_keypoints, self._bounds_min, self._bounds_max, strict=True)
-        candidate_keypoints = candidate_keypoints[within_space]
-        candidate_pixels = candidate_pixels[within_space]
-        candidate_rigid_group_ids = candidate_rigid_group_ids[within_space]
-        # merge close points by clustering in cartesian space
-        merged_indices = self._merge_clusters(candidate_keypoints)
-        candidate_keypoints = candidate_keypoints[merged_indices]
-        candidate_pixels = candidate_pixels[merged_indices]
-        candidate_rigid_group_ids = candidate_rigid_group_ids[merged_indices]
-        # sort candidates by locations
-        sort_idx = np.lexsort((candidate_pixels[:, 0], candidate_pixels[:, 1]))
-        candidate_keypoints = candidate_keypoints[sort_idx]
-        candidate_pixels = candidate_pixels[sort_idx]
-        candidate_rigid_group_ids = candidate_rigid_group_ids[sort_idx]
+        features_flat, features = self._get_features(transformed_rgb, shape_info)
+        if self._keypoint_features is None:
+            # for each mask, cluster in feature space to get meaningful regions, and uske their centers as keypoint candidates
+            candidate_keypoints, candidate_pixels, candidate_rigid_group_ids = self._cluster_features(points, features_flat, masks)
+            # exclude keypoints that are outside of the workspace
+            within_space = filter_points_by_bounds(candidate_keypoints, self._bounds_min, self._bounds_max, strict=True)
+            candidate_keypoints = candidate_keypoints[within_space]
+            candidate_pixels = candidate_pixels[within_space]
+            candidate_rigid_group_ids = candidate_rigid_group_ids[within_space]
+            # merge close points by clustering in cartesian space
+            merged_indices = self._merge_clusters(candidate_keypoints)
+            candidate_keypoints = candidate_keypoints[merged_indices]
+            candidate_pixels = candidate_pixels[merged_indices]
+            candidate_rigid_group_ids = candidate_rigid_group_ids[merged_indices]
+            # sort candidates by locations
+            sort_idx = np.lexsort((candidate_pixels[:, 0], candidate_pixels[:, 1]))
+            candidate_keypoints = candidate_keypoints[sort_idx]
+            candidate_pixels = candidate_pixels[sort_idx]
+            candidate_rigid_group_ids = candidate_rigid_group_ids[sort_idx]
+            self.candidate_rigid_group_ids = candidate_rigid_group_ids
+            # store keypoints pixel features of the first frame
+            self._keypoint_features = []
+            for pixel in candidate_pixels:
+                self._keypoint_features.append(features[pixel[0], pixel[1]])
+        else:
+            candidate_keypoints, candidate_pixels = self._track_keypoints(points, features, masks)
         # project keypoints to image space
         projected = self._project_keypoints_to_img(rgb, candidate_pixels, candidate_rigid_group_ids, masks, features_flat)
         return candidate_keypoints, projected
 
-    def _preprocess(self, rgb, points, masks):
-        # convert masks to binary masks
-        masks = [masks == uid for uid in np.unique(masks)]
+    def _preprocess(self, rgb, points):
         # ensure input shape is compatible with dinov2
         H, W, _ = rgb.shape
         patch_h = int(H // self._patch_size)
@@ -130,12 +138,14 @@ class KeypointTrackerProcess():
             'patch_h': patch_h,
             'patch_w': patch_w,
         }
-        return transformed_rgb, rgb, points, masks, shape_info
+        return transformed_rgb, rgb, points, shape_info
     
     def _project_keypoints_to_img(self, rgb, candidate_pixels, candidate_rigid_group_ids, masks, features_flat):
         projected = rgb.copy()
         # overlay keypoints on the image
         for keypoint_count, pixel in enumerate(candidate_pixels):
+            if pixel is None:
+                continue
             displayed_text = f"{keypoint_count}"
             text_length = len(displayed_text)
             # draw a box
@@ -147,7 +157,6 @@ class KeypointTrackerProcess():
             org = (pixel[1] - 7 * (text_length), pixel[0] + 7)
             color = (255, 0, 0)
             cv2.putText(projected, str(keypoint_count), org, cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
-            keypoint_count += 1
         return projected
 
     @torch.inference_mode()
@@ -168,13 +177,15 @@ class KeypointTrackerProcess():
                                                 size=(img_h, img_w),
                                                 mode='bilinear').permute(0, 2, 3, 1).squeeze(0)  # float32 [H, W, feature_dim]
         features_flat = interpolated_feature_grid.reshape(-1, interpolated_feature_grid.shape[-1])  # float32 [H*W, feature_dim]
-        return features_flat
+        return features_flat, interpolated_feature_grid
 
     def _cluster_features(self, points, features_flat, masks):
         candidate_keypoints = []
         candidate_pixels = []
         candidate_rigid_group_ids = []
-        for rigid_group_id, binary_mask in enumerate(masks):
+        # convert masks to binary masks
+        binary_masks = [masks == uid for uid in np.unique(masks)]
+        for rigid_group_id, binary_mask in enumerate(binary_masks):
             # ignore mask that is too large
             if np.mean(binary_mask) > self._config['max_mask_ratio']:
                 continue
@@ -207,6 +218,8 @@ class KeypointTrackerProcess():
                 member_pixels = feature_pixels[member_idx]
                 member_features = features_pca[member_idx]
                 dist = torch.norm(member_features - cluster_center, dim=-1)
+                if dist.shape[0] == 0:
+                    continue
                 closest_idx = torch.argmin(dist)
                 candidate_keypoints.append(member_points[closest_idx])
                 candidate_pixels.append(member_pixels[closest_idx])
@@ -226,3 +239,26 @@ class KeypointTrackerProcess():
             dist = np.linalg.norm(candidate_keypoints - center, axis=-1)
             merged_indices.append(np.argmin(dist))
         return merged_indices
+    
+    def _track_keypoints(self, points, features, masks):
+        assert self._keypoint_features is not None
+        keypoint_to_mask_id = self.candidate_rigid_group_ids
+        candidate_keypoints = []
+        candidate_pixels = []
+        for idx, feature in enumerate(self._keypoint_features):
+            mask_id = keypoint_to_mask_id[idx]
+            binary_mask = masks == mask_id
+            if binary_mask.sum() < 10:
+                # mask of this keypoint is not exist or too small
+                candidate_keypoints.append(None)
+                candidate_pixels.append(None)
+                continue
+            dist = torch.norm(features - feature, dim=-1)
+            dist[~binary_mask] = 1e6
+            closest_pixel = torch.argmin(dist)
+            closest_pixel = np.unravel_index(closest_pixel.cpu().numpy(), features.shape[:2])
+            candidate_keypoints.append(points[closest_pixel[0], closest_pixel[1]])
+            candidate_pixels.append(closest_pixel)
+            if self.track_type == "last_frame":
+                self._keypoint_features[idx] = features[closest_pixel[0], closest_pixel[1]]
+        return candidate_keypoints, candidate_pixels

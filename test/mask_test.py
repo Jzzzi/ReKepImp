@@ -27,6 +27,13 @@ def main():
     tracker_process = MaskTrackerProcess(config['mask_tracker'])
     tracker_process.start()
 
+    obj_masks = [[0,0,255],
+                 [0,255,0],
+                 [255,0,0],
+                 [0,255,255],
+                 [255,0,255],
+                 [255,255,0]]
+
     while True:
         data = None
         while data is None:
@@ -41,7 +48,7 @@ def main():
         for obj in objects:
             mask_obj = (mask == obj)
             color_mask = np.zeros_like(bgr)
-            color_mask[mask_obj] = [0, 255, 255]
+            color_mask[mask_obj] = obj_masks[obj]
             bgr = cv2.addWeighted(bgr, 1, color_mask, 0.5, 0)
 
         cv2.imshow("Mask", bgr)

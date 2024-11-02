@@ -44,6 +44,7 @@ class RealSense():
         print(GREEN + "[RealSense]: Starting RealSense sensor..." + RESET)
         self._thread = threading.Thread(target=self._run)
         self._thread.start()
+        time.sleep(1) # wait for auto-exposure to stabilize
         print(GREEN + "[RealSense]: RealSense sensor started." + RESET)
 
     def get(self):

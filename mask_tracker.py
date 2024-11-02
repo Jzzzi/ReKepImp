@@ -86,6 +86,8 @@ class MaskTrackerProcess():
                 for i in range(len(masks)):
                     self._mask[masks[i]>0] = i + 1
                 
+                del masks
+                torch.cuda.empty_cache()
                 self._init_cutie(rgb)
                 self._mask_queue.put(self._mask.cpu().numpy())
                 self._segmented = True
