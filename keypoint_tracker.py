@@ -241,15 +241,11 @@ class KeypointTrackerProcess():
         return merged_indices
     
     def _track_keypoints(self, points, features, masks):
-        # DEBUG
-        print("Handle tracking")
         assert self._keypoint_features is not None
         keypoint_to_mask_id = self.candidate_rigid_group_ids
         candidate_keypoints = []
         candidate_pixels = []
         for idx, feature in enumerate(self._keypoint_features):
-            # DEBUG
-            print(f"Tracking keypoint {idx}")
             mask_id = keypoint_to_mask_id[idx]
             binary_mask = masks == mask_id
             if binary_mask.sum() < 10:
@@ -257,16 +253,10 @@ class KeypointTrackerProcess():
                 candidate_keypoints.append(None)
                 candidate_pixels.append(None)
                 continue
-            # DEBUG
-            print("Calculating distance")
             dist = torch.norm(features - feature, dim=-1)
             dist[~binary_mask] = 1e6
-            # DEBUG
-            print("Calculating closest pixel")
             closest_pixel = torch.argmin(dist)
             closest_pixel = np.unravel_index(closest_pixel.cpu().numpy(), features.shape[:2])
-            # DEBUG
-            print("Appending")
             candidate_keypoints.append(points[closest_pixel[0], closest_pixel[1]])
             candidate_pixels.append(closest_pixel)
             if self.track_type == "last_frame":
