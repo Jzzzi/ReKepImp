@@ -26,6 +26,7 @@ def main():
         data = None
         while data is None:
             data = rs.get()
+        print(data['color'].shape)
 
         rgb_image = cv2.cvtColor(data['color'], cv2.COLOR_BGR2RGB)
         points = get_cam_points(data['depth'], config['realsense']['instrinsics'])
@@ -38,6 +39,7 @@ def main():
             'masks': masks
         })
 
+        print("WAITING FOR RESULT")
         result = tracker.get()
         projected = result['projected']
         projected = cv2.cvtColor(projected, cv2.COLOR_RGB2BGR)

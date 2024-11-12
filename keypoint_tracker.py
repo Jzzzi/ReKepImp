@@ -119,7 +119,7 @@ class KeypointTrackerProcess():
         else:
             candidate_keypoints, candidate_pixels = self._track_keypoints(points, features, masks)
         # project keypoints to image space
-        projected = self._project_keypoints_to_img(rgb, candidate_pixels, candidate_rigid_group_ids, masks, features_flat)
+        projected = self._project_keypoints_to_img(rgb, candidate_pixels)
         return candidate_keypoints, projected
 
     def _preprocess(self, rgb, points):
@@ -140,7 +140,7 @@ class KeypointTrackerProcess():
         }
         return transformed_rgb, rgb, points, shape_info
     
-    def _project_keypoints_to_img(self, rgb, candidate_pixels, candidate_rigid_group_ids, masks, features_flat):
+    def _project_keypoints_to_img(self, rgb, candidate_pixels):
         projected = rgb.copy()
         # overlay keypoints on the image
         for keypoint_count, pixel in enumerate(candidate_pixels):
@@ -241,11 +241,15 @@ class KeypointTrackerProcess():
         return merged_indices
     
     def _track_keypoints(self, points, features, masks):
+        # DEBUG
+        print("Handle tracking")
         assert self._keypoint_features is not None
         keypoint_to_mask_id = self.candidate_rigid_group_ids
         candidate_keypoints = []
         candidate_pixels = []
         for idx, feature in enumerate(self._keypoint_features):
+            # DEBUG
+            print(f"Tracking keypoint {idx}")
             mask_id = keypoint_to_mask_id[idx]
             binary_mask = masks == mask_id
             if binary_mask.sum() < 10:
@@ -253,10 +257,16 @@ class KeypointTrackerProcess():
                 candidate_keypoints.append(None)
                 candidate_pixels.append(None)
                 continue
+            # DEBUG
+            print("Calculating distance")
             dist = torch.norm(features - feature, dim=-1)
             dist[~binary_mask] = 1e6
+            # DEBUG
+            print("Calculating closest pixel")
             closest_pixel = torch.argmin(dist)
             closest_pixel = np.unravel_index(closest_pixel.cpu().numpy(), features.shape[:2])
+            # DEBUG
+            print("Appending")
             candidate_keypoints.append(points[closest_pixel[0], closest_pixel[1]])
             candidate_pixels.append(closest_pixel)
             if self.track_type == "last_frame":
