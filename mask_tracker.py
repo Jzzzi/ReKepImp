@@ -67,7 +67,6 @@ class MaskTrackerProcess():
         return self.__sam_done_event.is_set()
     
     def _run(self):
-        print("Mask tracker process started.")
         while not self._stop_event.is_set():
             try:
                 data = self._data_queue.get(timeout=1)
@@ -86,15 +85,12 @@ class MaskTrackerProcess():
                 self._num_objects = min(len(masks), self._num_objects)
                 print(GREEN + f"[MaskTracker]: {self._num_objects} masks generated." + RESET)
                 masks = masks[:self._num_objects]
-                self._mask = torch.zeros(rgb.shape[:2], dtype=torch.uint8).cuda()
+                init_mask = torch.zeros(rgb.shape[:2], dtype=torch.uint8).cuda()
                 self._objects = [i + 1 for i in range(len(masks))]
                 for i in range(len(masks)):
-                    self._mask[masks[i]>0] = self._objects[i]
-                
-                del masks
+                    init_mask[masks[i]>0] = self._objects[i]
                 torch.cuda.empty_cache()
-                self._init_cutie(rgb)
-                self._mask_queue.put(self._mask.cpu().numpy())
+                self._init_cutie(rgb, init_mask)
                 self._segmented = True
 
             else:
@@ -119,7 +115,8 @@ class MaskTrackerProcess():
         from segment_anything import sam_model_registry, SamAutomaticMaskGenerator
         # sam model initialization
         sam_checkpoint = os.path.join(self._path, "model", "sam_vit_h_4b8939.pth")
-        model_type = "vit_h"
+        model_type = "vit_h"        print("Cutie tracker initialized.")
+
         sam = sam_model_registry[model_type](checkpoint=sam_checkpoint)
         sam.to(device=self._device)
         mask_generator = SamAutomaticMaskGenerator(sam,
@@ -140,13 +137,16 @@ class MaskTrackerProcess():
 
     @torch.inference_mode()
     @torch.amp.autocast('cuda')
-    def _init_cutie(self, first_frame):
-        print("Initializing Cutie tracker...")
+    def _init_cutie(self, first_frame, init_mask):
+        print(GREEN + f"[MaskTracker]: Initializing Cutie tracker..." + RESET)
         cutie = get_default_model()
         self._processor = InferenceCore(cutie, cfg=cutie.cfg)
         self._processor.max_internal_size = 480
-        output_prob = self._processor.step(to_tensor(first_frame).cuda().float()/255, self._mask, objects=self._objects)
-        print("Cutie tracker initialized.")
+        output_prob = self._processor.step(to_tensor(first_frame).cuda().float()/255, init_mask, objects=self._objects)
+        mask = self._processor.output_prob_to_mask(output_prob)
+        mask = mask.cpu().numpy()
+        self._mask_queue.put(mask)
+        print(GREEN + f"[MaskTracker]: Cutie tracker initialized." + RESET)
 
     @torch.inference_mode()
     @torch.amp.autocast('cuda')
