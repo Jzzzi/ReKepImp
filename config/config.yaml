@@ -3,6 +3,8 @@ seed: &seed 0
 bounds_min: &bounds_min [-10.0, -10.0, -10.0]
 bounds_max: &bounds_max [10.0, 10.0, 10.0]
 path: &path '/home/liujk/ReKepImp'
+instrinsics: &instrinsics [386.74, 0, 326.66, 0, 386.28, 247.33, 0, 0, 1]
+distortions: &distortions [-0.0556738413870335, 0.0655610412359238, -0.000339997815899551, 0.000355891766957939, -0.021365724503994]
 
 keypoint_proposer:
   num_candidates_per_mask: 5
@@ -14,22 +16,30 @@ keypoint_proposer:
   seed: *seed
 
 realsense:
-  instrinsics: [386.74, 0, 326.66, 0, 386.28, 247.33, 0, 0, 1]
+  instrinsics: *instrinsics
+  distortions: *distortions
   height: 480
   width: 640
   fps: 30
-  max_queue_size: 3
+  max_queue_size: 1
+  tag_length: 0.074
+  extrinsic_calibrator:
+    tag_length: 0.074
+    tag_idx: 0
+    tag_family: 'DICT_APRILTAG_16H5'
 
 mask_tracker:
   num_objects: 5
   path: *path
   device: *device
+  max_mask_ratio: 0.05
 
 keypoint_tracker:
   num_candidates_per_mask: 5
-  min_dist_bt_keypoints: 0.06
-  max_mask_ratio: 0.5
+  min_dist_bt_keypoints: 0.01
+  max_mask_ratio: 1
   device: *device
   bounds_min: *bounds_min
   bounds_max: *bounds_max
   seed: *seed
+

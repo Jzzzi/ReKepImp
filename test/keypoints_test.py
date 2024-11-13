@@ -1,9 +1,6 @@
 import sys
 import os
 import yaml
-import queue
-import threading as th
-import time
 import multiprocessing as mp
 
 import cv2
@@ -39,10 +36,8 @@ def main():
         data = rs.get()
     mask_tracker.send(data['color'])
     mask = mask_tracker.get()
-    
     keypoint_tracker = KeypointTrackerProcess(config['keypoint_tracker'])
-    if mask_tracker.sam_done():
-        keypoint_tracker.start()
+    keypoint_tracker.start()
 
     keypoint_tracker.send({
         'rgb': cv2.cvtColor(data['color'], cv2.COLOR_BGR2RGB),
@@ -67,6 +62,7 @@ def main():
         projected = result['projected']
 
         objects = np.unique(mask)
+        objects = objects[objects != 0]
         for obj in objects:
             mask_obj = (mask == obj)
             color_mask = np.zeros_like(projected)

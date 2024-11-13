@@ -30,6 +30,7 @@ class MaskTrackerProcess():
         self._num_objects = config['num_objects']
         self._path = config['path']
         self._device = config['device']
+        self._max_mask_ratio = config['max_mask_ratio']
         self._process = None
         self._segmented = False
         self._mask = None
@@ -79,12 +80,16 @@ class MaskTrackerProcess():
                 bgr = data
                 rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
                 masks = self._get_sam_mask(rgb)
-                self._num_objects = min(self._num_objects, len(masks))
+
                 masks = [m['segmentation'] for m in masks[:self._num_objects]]
+                masks = [m for m in masks if m.sum()/(m.shape[0]*m.shape[1]) < self._max_mask_ratio]
+                self._num_objects = min(len(masks), self._num_objects)
+                print(GREEN + f"[MaskTracker]: {self._num_objects} masks generated." + RESET)
+                masks = masks[:self._num_objects]
                 self._mask = torch.zeros(rgb.shape[:2], dtype=torch.uint8).cuda()
                 self._objects = [i + 1 for i in range(len(masks))]
                 for i in range(len(masks)):
-                    self._mask[masks[i]>0] = i + 1
+                    self._mask[masks[i]>0] = self._objects[i]
                 
                 del masks
                 torch.cuda.empty_cache()
@@ -110,19 +115,25 @@ class MaskTrackerProcess():
         stability_score : an additional measure of mask quality
         crop_box : the crop of the image used to generate this mask in XYWH format
         '''
-        print('Initializing the mask generator...')
+        print(GREEN + f"[MaskTracker]: Initializing SAM model..." + RESET)
         from segment_anything import sam_model_registry, SamAutomaticMaskGenerator
         # sam model initialization
         sam_checkpoint = os.path.join(self._path, "model", "sam_vit_h_4b8939.pth")
         model_type = "vit_h"
         sam = sam_model_registry[model_type](checkpoint=sam_checkpoint)
         sam.to(device=self._device)
-        mask_generator = SamAutomaticMaskGenerator(sam)
+        mask_generator = SamAutomaticMaskGenerator(sam,
+                                                    points_per_side=48,
+                                                    # pred_iou_thresh=0.85,
+                                                    # stability_score_thresh=0.85,
+                                                    # crop_n_layers=1,
+                                                    # crop_n_points_downscale_factor=1.5,
+                                                    # min_mask_region_area=50
+                                                    )
 
-        print('Generating masks...')
+        print(GREEN + f"[MaskTracker]: Generating masks..." + RESET)
         masks = mask_generator.generate(rgb)
         # sorted by te predicted_iou
-        print('Sorting masks...')
         masks = sorted(masks, key=lambda x: x['predicted_iou'], reverse=True)
         self.__sam_done_event.set()
         return masks

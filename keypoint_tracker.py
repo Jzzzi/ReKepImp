@@ -111,13 +111,15 @@ class KeypointTrackerProcess():
             candidate_keypoints = candidate_keypoints[sort_idx]
             candidate_pixels = candidate_pixels[sort_idx]
             candidate_rigid_group_ids = candidate_rigid_group_ids[sort_idx]
-            self.candidate_rigid_group_ids = candidate_rigid_group_ids
+            self._candidate_rigid_group_ids = candidate_rigid_group_ids
             # store keypoints pixel features of the first frame
             self._keypoint_features = []
             for pixel in candidate_pixels:
                 self._keypoint_features.append(features[pixel[0], pixel[1]])
+            cv2.imwrite("keypoints_firstframe.png", cv2.cvtColor(self._project_keypoints_to_img(rgb, candidate_pixels), cv2.COLOR_RGB2BGR))
         else:
             candidate_keypoints, candidate_pixels = self._track_keypoints(points, features, masks)
+            cv2.imwrite("keypoints_nextframe.png", cv2.cvtColor(self._project_keypoints_to_img(rgb, candidate_pixels), cv2.COLOR_RGB2BGR))
         # project keypoints to image space
         projected = self._project_keypoints_to_img(rgb, candidate_pixels)
         return candidate_keypoints, projected
@@ -183,10 +185,14 @@ class KeypointTrackerProcess():
         candidate_keypoints = []
         candidate_pixels = []
         candidate_rigid_group_ids = []
+        # exclude the background 0
+        objects = np.unique(masks)
+        objects = objects[objects != 0]
         # convert masks to binary masks
-        binary_masks = [masks == uid for uid in np.unique(masks)]
-        for rigid_group_id, binary_mask in enumerate(binary_masks):
+        binary_masks = [masks == uid for uid in objects]
+        for id, binary_mask in enumerate(binary_masks):
             # ignore mask that is too large
+            rigid_group_id = objects[id]
             if np.mean(binary_mask) > self._config['max_mask_ratio']:
                 continue
             # consider only foreground features
@@ -199,11 +205,12 @@ class KeypointTrackerProcess():
             features_pca = torch.mm(obj_features_flat, v[:, :3])
             features_pca = (features_pca - features_pca.min(0)[0]) / (features_pca.max(0)[0] - features_pca.min(0)[0])
             X = features_pca
+            assert not torch.isnan(X).any() and not torch.isinf(X).any(), "Input data contains NaN or Inf values."
             # add feature_pixels as extra dimensions
             feature_points_torch = torch.tensor(feature_points, dtype=features_pca.dtype, device=features_pca.device)
             feature_points_torch  = (feature_points_torch - feature_points_torch.min(0)[0]) / (feature_points_torch.max(0)[0] - feature_points_torch.min(0)[0])
+            assert not torch.isnan(feature_points_torch).any() and not torch.isinf(feature_points_torch).any(), "Input data contains NaN or Inf values."
             X = torch.cat([X, feature_points_torch], dim=-1)
-            # cluster features to get meaningful regions
             cluster_ids_x, cluster_centers = kmeans(
                 X=X,
                 num_clusters=self._config['num_candidates_per_mask'],
@@ -242,7 +249,7 @@ class KeypointTrackerProcess():
     
     def _track_keypoints(self, points, features, masks):
         assert self._keypoint_features is not None
-        keypoint_to_mask_id = self.candidate_rigid_group_ids
+        keypoint_to_mask_id = self._candidate_rigid_group_ids
         candidate_keypoints = []
         candidate_pixels = []
         for idx, feature in enumerate(self._keypoint_features):
@@ -252,6 +259,7 @@ class KeypointTrackerProcess():
                 # mask of this keypoint is not exist or too small
                 candidate_keypoints.append(None)
                 candidate_pixels.append(None)
+                print(RED + f"[KeypointTracker]: Mask {mask_id} is not exist or too small" + RESET)
                 continue
             dist = torch.norm(features - feature, dim=-1)
             dist[~binary_mask] = 1e6

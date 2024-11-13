@@ -1,6 +1,7 @@
 import os
 import sys
 import yaml
+import time
 import cv2
 import multiprocessing as mp
 import numpy as np
@@ -16,6 +17,8 @@ def main():
     mp.set_start_method('spawn')
     rs = RealSense(config['realsense'])
     rs.start()
+    # wait for the camera to warm up
+    time.sleep(3)
 
     tracker = KeypointTrackerProcess(config['keypoint_tracker'])
     tracker.start()
@@ -31,7 +34,6 @@ def main():
         points = get_cam_points(data['depth'], config['realsense']['instrinsics'])
         masks = np.zeros(rgb_image.shape[:2], dtype=np.uint8)
         masks[top:bottom, left:right] = 1
-        
         tracker.send({
             'rgb': rgb_image,
             'points': points,

@@ -21,6 +21,7 @@ def main():
 
     rs = RealSense(config['realsense'])
     rs.start()
+    time.sleep(3)
 
 
     mp.set_start_method('spawn')
@@ -32,7 +33,7 @@ def main():
                  [255,0,0],
                  [0,255,255],
                  [255,0,255],
-                 [255,255,0]]
+                 [255,255,0],]
 
     while True:
         data = None
@@ -43,6 +44,7 @@ def main():
 
         # exlude the background 0
         objects = np.unique(mask)
+        objects = objects[objects != 0]
         bgr = data['color']
 
         for obj in objects:

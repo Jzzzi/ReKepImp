@@ -15,7 +15,6 @@ def main():
 
     rs = RealSense(realsense_config)
     rs.start()
-
     while True:
         data = None
         while data is None:
@@ -25,6 +24,8 @@ def main():
         key = cv2.waitKey(1)
         if key == ord('q'):
             break
+        if key == ord('s'):
+            cv2.imwrite('color.png', color)
     rs.stop()
 if __name__ == '__main__':
     main()
