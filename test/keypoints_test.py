@@ -60,7 +60,8 @@ def main():
         })
         result = keypoint_tracker.get()
         projected = result['projected']
-
+        ids = result['obj_ids']
+    
         objects = np.unique(mask)
         objects = objects[objects != 0]
         for obj in objects:

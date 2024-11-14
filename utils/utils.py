@@ -22,7 +22,15 @@ def get_cam_points(depth:np.ndarray, instrinsics:np.ndarray)->np.ndarray:
 
 def get_points(depth:np.ndarray, instrinsics:np.ndarray, extrinsics:np.ndarray)->np.ndarray:
     '''
-    extrinsics, [4, 4], c2w matrix    
+    Transforms depth map points from camera coordinates to world coordinates.
+
+    Args:
+        depth (np.ndarray): A 2D array representing the depth map.
+        instrinsics (np.ndarray): A 3x3 array representing the camera intrinsic parameters.
+        extrinsics (np.ndarray): A 4x4 array representing the camera-to-world transformation matrix (extrinsics).
+
+    Returns:
+        np.ndarray: A 3D array of shape (h, w, 3) representing the transformed points in world coordinates.
     '''
     points = get_cam_points(depth, instrinsics)
     h, w = depth.shape

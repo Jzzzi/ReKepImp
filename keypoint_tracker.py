@@ -68,6 +68,7 @@ class KeypointTrackerProcess():
         {
             'keypoints': np.ndarray, [N, 3]
             'projected': np.ndarray, [H, W, 3]
+            'obj_ids': np.ndarray, [N]
         }
         '''
         return self._result_queue.get()
@@ -85,6 +86,7 @@ class KeypointTrackerProcess():
             result = {
                 'keypoints': keypoints,
                 'projected': projected,
+                'obj_ids': self._candidate_rigid_group_ids
             }
             self._result_queue.put(result)
 
@@ -116,10 +118,8 @@ class KeypointTrackerProcess():
             self._keypoint_features = []
             for pixel in candidate_pixels:
                 self._keypoint_features.append(features[pixel[0], pixel[1]])
-            cv2.imwrite("keypoints_firstframe.png", cv2.cvtColor(self._project_keypoints_to_img(rgb, candidate_pixels), cv2.COLOR_RGB2BGR))
         else:
             candidate_keypoints, candidate_pixels = self._track_keypoints(points, features, masks)
-            cv2.imwrite("keypoints_nextframe.png", cv2.cvtColor(self._project_keypoints_to_img(rgb, candidate_pixels), cv2.COLOR_RGB2BGR))
         # project keypoints to image space
         projected = self._project_keypoints_to_img(rgb, candidate_pixels)
         return candidate_keypoints, projected

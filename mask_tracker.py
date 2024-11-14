@@ -31,6 +31,7 @@ class MaskTrackerProcess():
         self._path = config['path']
         self._device = config['device']
         self._max_mask_ratio = config['max_mask_ratio']
+        self._min_mask_ratio = config['min_mask_ratio']
         self._process = None
         self._segmented = False
         self._mask = None
@@ -80,15 +81,17 @@ class MaskTrackerProcess():
                 rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
                 masks = self._get_sam_mask(rgb)
 
-                masks = [m['segmentation'] for m in masks[:self._num_objects]]
+                masks = [m['segmentation'] for m in masks]
+                print(GREEN + f"[MaskTracker]: {len(masks)} masks generated." + RESET)
                 masks = [m for m in masks if m.sum()/(m.shape[0]*m.shape[1]) < self._max_mask_ratio]
+                masks = [m for m in masks if m.sum()/(m.shape[0]*m.shape[1]) > self._min_mask_ratio]
+                print(GREEN + f"[MaskTracker]: {len(masks)} masks selected." + RESET)
                 self._num_objects = min(len(masks), self._num_objects)
-                print(GREEN + f"[MaskTracker]: {self._num_objects} masks generated." + RESET)
                 # DEBUG
                 # print the area ratio of each mask
+                masks = masks[:self._num_objects]
                 for i, mask in enumerate(masks):
                     print(GREEN + f"[MaskTracker]: Mask {i} area ratio: {mask.sum()/(mask.shape[0]*mask.shape[1])}" + RESET)
-                masks = masks[:self._num_objects]
                 init_mask = torch.zeros(rgb.shape[:2], dtype=torch.uint8).cuda()
                 self._objects = [i + 1 for i in range(len(masks))]
                 for i in range(len(masks)):
@@ -126,8 +129,8 @@ class MaskTrackerProcess():
                                                     points_per_side=64,
                                                     # pred_iou_thresh=0.85,
                                                     # stability_score_thresh=0.85,
-                                                    crop_n_layers=3,
-                                                    crop_n_points_downscale_factor=2,
+                                                    crop_n_layers=2,
+                                                    crop_n_points_downscale_factor=1.5,
                                                     # min_mask_region_area=50
                                                     )
 
