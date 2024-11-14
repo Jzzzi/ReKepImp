@@ -84,6 +84,10 @@ class MaskTrackerProcess():
                 masks = [m for m in masks if m.sum()/(m.shape[0]*m.shape[1]) < self._max_mask_ratio]
                 self._num_objects = min(len(masks), self._num_objects)
                 print(GREEN + f"[MaskTracker]: {self._num_objects} masks generated." + RESET)
+                # DEBUG
+                # print the area ratio of each mask
+                for i, mask in enumerate(masks):
+                    print(GREEN + f"[MaskTracker]: Mask {i} area ratio: {mask.sum()/(mask.shape[0]*mask.shape[1])}" + RESET)
                 masks = masks[:self._num_objects]
                 init_mask = torch.zeros(rgb.shape[:2], dtype=torch.uint8).cuda()
                 self._objects = [i + 1 for i in range(len(masks))]
@@ -115,16 +119,15 @@ class MaskTrackerProcess():
         from segment_anything import sam_model_registry, SamAutomaticMaskGenerator
         # sam model initialization
         sam_checkpoint = os.path.join(self._path, "model", "sam_vit_h_4b8939.pth")
-        model_type = "vit_h"        print("Cutie tracker initialized.")
-
+        model_type = "vit_h"
         sam = sam_model_registry[model_type](checkpoint=sam_checkpoint)
         sam.to(device=self._device)
         mask_generator = SamAutomaticMaskGenerator(sam,
-                                                    points_per_side=48,
+                                                    points_per_side=64,
                                                     # pred_iou_thresh=0.85,
                                                     # stability_score_thresh=0.85,
-                                                    # crop_n_layers=1,
-                                                    # crop_n_points_downscale_factor=1.5,
+                                                    crop_n_layers=3,
+                                                    crop_n_points_downscale_factor=2,
                                                     # min_mask_region_area=50
                                                     )
 

@@ -15,9 +15,9 @@ with open("./config/config.yaml", "r") as f:
 rs = RealSense(config['realsense'])
 rs.start()
 
-config = config['realsense']['extrinsic_calibrator']
+config = config['realsense']
 instrinsics = config['instrinsics']
-length = config['tag_length']
+length = config['extrinsic_calibrator']['tag_length']
 instrinsics = np.array(instrinsics).reshape(3, 3)
 distortion = [0.0, 0.0, 0.0, 0.0, 0.0]
 distortion = np.array(distortion)
@@ -27,10 +27,7 @@ obj_points = np.array([
             [+length / 2, -length / 2, 0],
             [-length / 2, -length / 2, 0]
         ])
-if config['tag_family'] == 'DICT_APRILTAG_16H5':
-    dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_16H5)
-else:
-    raise ValueError("Invalid tag family")
+dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_16H5)
 
 params = cv2.aruco.DetectorParameters()
 detector = cv2.aruco.ArucoDetector(dict, params)
