@@ -10,16 +10,15 @@ from utils.utils import mat2quat, quat2mat
 if __name__ == "__main__":
     bot = airbot.create_agent(end_mode="gripper")
     w2a = np.array(
-        [[ 0.9994551,  -0.01450361, -0.02965028,  0.58704867],
+        [[ 0.9994551,  -0.01450361, -0.02965028,  0.58004867],
         [ 0.01355799,  0.99940074, -0.03184862,  0.15271253],
-        [ 0.03009443,  0.03142927,  0.99905281,  0.00102165],
+        [ 0.03009443,  0.03142927,  0.99905281,  0.02702165],
         [ 0.        ,  0.        ,  0.        ,  1.        ]])
     rot = np.array([[1, 0, 0], [0, 0, -1], [0, 1, 0]])
     quat = mat2quat(rot)
-    suc = bot.add_target_relative_rotation(quat)
-    print(suc)
-    while np.abs(bot.get_current_rotation() - quat).sum() > 0.01:
-        time.sleep(0.5)
+    if bot.add_target_relative_rotation(quat):
+        while np.abs(bot.get_current_rotation() - quat).sum() > 0.01:
+            time.sleep(0.5)
     # a2w = np.linalg.inv(w2a)
     while True:
         x, y, z = input("Enter the target position (x y z): ").split(' ')
