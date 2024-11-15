@@ -4,6 +4,7 @@
 *.jpg
 *.png
 *.pyc
+*.log
 
 # ignore ./ReKep folder
 ReKep/
