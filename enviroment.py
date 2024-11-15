@@ -35,7 +35,8 @@ class RealEnv:
         self._rs = None
         self._mask_tracker = None
         self._keypoint_tracker = None
-        
+
+        self._num_objects = None
         self._key2obj = []
 
         # initialize realsense camera
@@ -43,7 +44,9 @@ class RealEnv:
         self._rs.start()
         time.sleep(2)
 
-        # initialize mask tracker and keypoint tracker
+        # ==============================
+        # = Initialize mask tracker and keypoint tracker
+        # ==============================
         data = None
         while data is None:
             data = self._rs.get()
@@ -77,6 +80,7 @@ class RealEnv:
         Returns:
             np.ndarray: A 3D numpy array representing the SDF voxels.
         '''
+        # Trivial implementation, all set to 1e6
         shape = np.ceil((self.bounds_max - self.bounds_min) / resolution).astype(int)
         sdf_voxels = np.zeros(shape) + 1e6
         return sdf_voxels
@@ -129,6 +133,7 @@ class RealEnv:
         self._keypoint_tracker.send({"rgb": rgb, "points": points, "masks": keypoints})
         res = self._keypoint_tracker.get()
         self._key2obj = res['obj_ids']
+        self._num_objects = len(self._key2obj)
         
 
     def get_keypoint_positions(self):

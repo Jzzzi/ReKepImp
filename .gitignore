@@ -6,4 +6,4 @@
 *.pyc
 
 # ignore ./ReKep folder
-ReKep/*
+ReKep/
