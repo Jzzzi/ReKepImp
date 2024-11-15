@@ -13,7 +13,7 @@ from utils.utils import get_points
 from mask_tracker import MaskTrackerProcess
 from keypoint_tracker import KeypointTrackerProcess
 
-class RealEnv:
+class RealEnviroment:
     def __init__(self, config, scene_file, verbose=False, visualize=False):
         '''
         Initializes the real-world environment with configuration and scene file.
@@ -174,7 +174,7 @@ class RealEnv:
             noise (bool): If True, adds noise to the collision points.
         
         Returns:
-            np.ndarray: Array of collision points.
+            np.ndarray: Array of collision points, shape (N, 3).
         '''
         pass
 
