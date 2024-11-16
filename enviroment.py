@@ -4,17 +4,22 @@ import time
 
 import numpy as np
 import cv2
+import multiprocessing as mp
 
 import airbot
-
 sys.path.append(os.path.dirname(__file__))
 from utils.sensor import RealSense
-from utils.utils import get_points
+from utils.utils import get_points, quat2mat, mat2quat
 from mask_tracker import MaskTrackerProcess
 from keypoint_tracker import KeypointTrackerProcess
 
+RESET = "\033[0m"
+RED = "\033[31m"
+GREEN = "\033[32m"
+YELLOW = "\033[33m"
+
 class RealEnviroment:
-    def __init__(self, config, scene_file, verbose=False, visualize=False):
+    def __init__(self, config, scene_file=None, verbose=False, visualize=False):
         '''
         Initializes the real-world environment with configuration and scene file.
         
@@ -26,10 +31,10 @@ class RealEnviroment:
         self.video_cache = []
         self._config = config
         self.verbose = verbose
-        self.bounds_min = np.array(self.config['bounds_min'])
-        self.bounds_max = np.array(self.config['bounds_max'])
-        self.interpolate_pos_step_size = self.config['interpolate_pos_step_size']
-        self.interpolate_rot_step_size = self.config['interpolate_rot_step_size']
+        self.bounds_min = np.array(self._config['enviroment']['bounds_min'])
+        self.bounds_max = np.array(self._config['enviroment']['bounds_max'])
+        self.interpolate_pos_step_size = self._config['enviroment']['interpolate_pos_step_size']
+        self.interpolate_rot_step_size = self._config['enviroment']['interpolate_rot_step_size']
         self.step_counter = 0
 
         self._rs = None
@@ -39,10 +44,27 @@ class RealEnviroment:
         self._num_objects = None
         self._key2obj = []
 
-        # initialize realsense camera
+        # arm
+        # arm_setted = os.system("airbot_auto_set_zero")
+        # if arm_setted != 0:
+        #     raise Exception("Failed to set zero for the robot arm")
+        self._arm = airbot.create_agent(end_mode="gripper")
+        self._w2a = np.array(config['enviroment']['w2a'])
+        R = self._w2a[:3, :3]
+        T = self._w2a[:3, 3]
+        R_inv = R.T
+        T_inv = -np.dot(R_inv, T)
+        self._a2w = np.eye(4)
+        self._a2w[:3, :3] = R_inv
+        self._a2w[:3, 3] = T_inv
+
+        # ==============================
+        # = Initialize RealSense
+        # ==============================
+        mp.set_start_method('spawn')
         self._rs = RealSense(config['realsense'])
         self._rs.start()
-        time.sleep(2)
+        time.sleep(2) # warm up
 
         # ==============================
         # = Initialize mask tracker and keypoint tracker
@@ -50,8 +72,8 @@ class RealEnviroment:
         data = None
         while data is None:
             data = self._rs.get()
-        rgb = cv2.cvtColor(data['rgb'], cv2.COLOR_BGR2RGB)
-        depth = data['depth'].astype(np.float32) * 0.001
+        rgb = cv2.cvtColor(data['color'], cv2.COLOR_BGR2RGB)
+        depth = data['depth']
         instrinsics = config['realsense']['instrinsics']
         extrinsics = data['extrinsics']
         points = get_points(depth, instrinsics, extrinsics)
@@ -64,7 +86,7 @@ class RealEnviroment:
         self._keypoint_tracker.send({"rgb": rgb, "points": points, "masks": masks})
         self._keypoint_tracker.get()
 
-
+        print(GREEN + "[RealEnviroment]: RealEnviroment initialized" + RESET)
     # ======================================
     # = exposed functions
     # ======================================
@@ -99,8 +121,8 @@ class RealEnviroment:
         data = None
         while data is None:
             data = self._rs.get()
-        rgb = cv2.cvtColor(data['rgb'], cv2.COLOR_BGR2RGB)
-        depth = data['depth'].astype(np.float32) * 0.001 # convert to meters
+        rgb = cv2.cvtColor(data['color'], cv2.COLOR_BGR2RGB)
+        depth = data['depth']
 
         instrinsics = self._config['realsense']['instrinsics']
         extrinsics = data['extrinsics']
@@ -115,7 +137,7 @@ class RealEnviroment:
             'mask': mask
         }
 
-    def register_keypoints(self, keypoints):
+    def register_keypoints(self, keypoints = None): # keypoints para not needed
         '''
         Registers the keypoints in the environment.
         
@@ -125,12 +147,14 @@ class RealEnviroment:
         data = None
         while data is None:
             data = self._rs.get()
-        rgb = cv2.cvtColor(data['rgb'], cv2.COLOR_BGR2RGB)
-        depth = data['depth'].astype(np.float32) * 0.001
+        rgb = cv2.cvtColor(data['color'], cv2.COLOR_BGR2RGB)
+        depth = data['depth'].astype(np.float32)
         instrinsics = self._config['realsense']['instrinsics']
         extrinsics = data['extrinsics']
         points = get_points(depth, instrinsics, extrinsics)
-        self._keypoint_tracker.send({"rgb": rgb, "points": points, "masks": keypoints})
+        self._mask_tracker.send(data['color'])
+        masks = self._mask_tracker.get()
+        self._keypoint_tracker.send({"rgb": rgb, "points": points, "masks": masks})
         res = self._keypoint_tracker.get()
         self._key2obj = res['obj_ids']
         self._num_objects = len(self._key2obj)
@@ -143,16 +167,20 @@ class RealEnviroment:
         Returns:
             np.ndarray: Array of keypoint positions, shape (N, 3).
         '''
+        data = None
         while data is None:
             data = self._rs.get()
-        rgb = cv2.cvtColor(data['rgb'], cv2.COLOR_BGR2RGB)
-        depth = data['depth'].astype(np.float32) * 0.001
+        rgb = cv2.cvtColor(data['color'], cv2.COLOR_BGR2RGB)
+        depth = data['depth'].astype(np.float32)
         instrinsics = self._config['realsense']['instrinsics']
         extrinsics = data['extrinsics']
         points = get_points(depth, instrinsics, extrinsics)
-        self._keypoint_tracker.send({"rgb": rgb, "points": points, "masks": None})
+        self._mask_tracker.send(data['color'])
+        masks = self._mask_tracker.get()
+        self._keypoint_tracker.send({"rgb": rgb, "points": points, "masks": masks})
         res = self._keypoint_tracker.get()
-        return res['keypoints']    
+        return res['keypoints'], res['projected']    
+
 
     def get_object_by_keypoint(self, keypoint_idx):
         '''
@@ -168,7 +196,7 @@ class RealEnviroment:
 
     def get_collision_points(self, noise=True):
         '''
-        Retrieves collision points for the robot’s gripper and any object in hand.
+        Retrieves collision points for the robot's gripper and any object in hand.
         
         Parameters:
             noise (bool): If True, adds noise to the collision points.
@@ -176,7 +204,13 @@ class RealEnviroment:
         Returns:
             np.ndarray: Array of collision points, shape (N, 3).
         '''
-        pass
+        # TODO
+        pos = self.get_ee_pos()
+        pos = np.dot(self._a2w, np.array([pos[0], pos[1], pos[2], 1]))[:3]
+        side_length = 0.05
+        points_num = 1000
+        points = np.random.uniform(-side_length, side_length, (points_num, 3)) + pos
+        return points
 
     def reset(self):
         '''
@@ -185,6 +219,7 @@ class RealEnviroment:
         Returns:
             None
         '''
+
         pass
 
     def is_grasping(self, candidate_obj=None):
@@ -197,8 +232,8 @@ class RealEnviroment:
         Returns:
             bool: True if the robot is grasping the object, otherwise False.
         '''
-        pass
-
+        return (0.01 < self._arm.get_current_end() < 0.99)
+    
     def get_ee_pose(self):
         '''
         Retrieves the end-effector's (EE) pose, including position and orientation.
@@ -206,7 +241,13 @@ class RealEnviroment:
         Returns:
             np.ndarray: Array of [x, y, z, qx, qy, qz, qw], representing the position and orientation.
         '''
-        pass
+        pos, quat = self._arm.get_current_pose()
+        # convert to world coordinate
+        pos = np.dot(self._a2w, np.array([pos[0], pos[1], pos[2], 1]))[:3]
+        mat = quat2mat(quat)
+        mat = np.dot(self._a2w[:3, :3], mat)
+        quat = mat2quat(mat)
+        return np.concatenate([pos, quat])    
 
     def get_ee_pos(self):
         '''
@@ -215,7 +256,7 @@ class RealEnviroment:
         Returns:
             np.ndarray: Array [x, y, z] representing the end-effector’s position.
         '''
-        pass
+        return self.get_ee_pose()[:3]
 
     def get_ee_quat(self):
         '''
@@ -224,7 +265,8 @@ class RealEnviroment:
         Returns:
             np.ndarray: Array [qx, qy, qz, qw] representing the orientation.
         '''
-        pass
+        return self.get_ee_pose()[3:]
+
 
     def get_arm_joint_postions(self):
         '''
@@ -233,7 +275,7 @@ class RealEnviroment:
         Returns:
             np.ndarray: Array of joint positions.
         '''
-        pass
+        return self._arm.get_current_joint_q()
 
     def close_gripper(self):
         '''
@@ -242,7 +284,8 @@ class RealEnviroment:
         Returns:
             None
         '''
-        pass
+        self._arm.set_target_end(0.0)
+        self._last_end = 0.0
 
     def open_gripper(self):
         '''
@@ -251,7 +294,8 @@ class RealEnviroment:
         Returns:
             None
         '''
-        pass
+        self._arm.set_target_end(1.0)
+        self._last_end = 1.0
 
     def get_last_og_gripper_action(self):
         '''
@@ -260,7 +304,11 @@ class RealEnviroment:
         Returns:
             float: The last action taken by the gripper (e.g., 1.0 for open, 0.0 for closed).
         '''
-        pass
+        try:
+            return self._last_end
+        except:
+            # if no action has been taken yet
+            return None
 
     def get_gripper_open_action(self):
         '''
@@ -269,7 +317,7 @@ class RealEnviroment:
         Returns:
             float: Action code for opening the gripper.
         '''
-        pass
+        return 1.0
 
     def get_gripper_close_action(self):
         '''
@@ -278,7 +326,7 @@ class RealEnviroment:
         Returns:
             float: Action code for closing the gripper.
         '''
-        pass
+        return 0.0
 
     def get_gripper_null_action(self):
         '''
@@ -287,7 +335,7 @@ class RealEnviroment:
         Returns:
             float: Action code for no gripper action.
         '''
-        pass
+        return -1.0
 
     def compute_target_delta_ee(self, target_pose):
         '''
@@ -299,9 +347,14 @@ class RealEnviroment:
         Returns:
             tuple: (position difference, rotation difference).
         '''
-        pass
+        pos, quat = self.get_ee_pose()[:3], self.get_ee_pose()[3:]
+        target_pos = target_pose[:3]
+        target_quat = target_pose[3:]
+        pos_diff = target_pos - pos
+        rot_diff = target_quat - quat
+        return pos_diff, rot_diff
 
-    def execute_action(self, action, precise=True):
+    def execute_action(self, action, precise=True, wait=False):
         '''
         Executes a specified action on the robot, moving the gripper to a target pose.
         
@@ -312,7 +365,26 @@ class RealEnviroment:
         Returns:
             tuple: (position error, rotation error) after reaching the target pose.
         '''
-        pass
+        pos = action[:3]
+        quat = action[3:7]
+        end = action[7]
+        # convert to arm coordinate
+        pos = np.dot(self._w2a, np.array([pos[0], pos[1], pos[2], 1]))[:3]
+        mat = quat2mat(quat)
+        mat = np.dot(self._w2a[:3, :3], mat)
+        quat = mat2quat(mat)
+
+        reachable = self._arm.set_target_pose(pos, quat, vel = 0.05)
+        if not reachable:
+            return False
+        self._arm.set_target_end(end)
+        if wait:
+            while True:
+                if (np.abs(pos - self._arm.get_current_translation()) < 0.01).all():
+                    if (np.abs(quat - self._arm.get_current_rotation()) < 0.01).all():
+                        return True
+                time.sleep(0.5)
+        return True
 
     def sleep(self, seconds):
         '''
@@ -324,7 +396,7 @@ class RealEnviroment:
         Returns:
             None
         '''
-        pass
+        time.sleep(seconds)
 
     def save_video(self, save_path=None):
         '''
@@ -336,4 +408,13 @@ class RealEnviroment:
         Returns:
             str: The path where the video file is saved.
         '''
-        pass
+        print(YELLOW + "[RealEnviroment]: Fuck You!" + RESET)
+
+    def stop(self):
+        '''
+        Terminate all processes and threads.
+        '''
+        self._rs.stop()
+        self._mask_tracker.stop()
+        self._keypoint_tracker.stop()
+        print(GREEN + "[RealEnviroment]: RealEnviroment stopped" + RESET)

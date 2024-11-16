@@ -30,8 +30,14 @@ class MaskTrackerProcess():
         self._num_objects = config['num_objects']
         self._path = config['path']
         self._device = config['device']
+
+        # SAM parameters
         self._max_mask_ratio = config['max_mask_ratio']
         self._min_mask_ratio = config['min_mask_ratio']
+        self._points_per_side = config['points_per_side']
+        self._crop_n_layers = config['crop_n_layers']
+        self._crop_n_points_downscale_factor = config['crop_n_points_downscale_factor']
+        
         self._process = None
         self._segmented = False
         self._mask = None
@@ -126,11 +132,11 @@ class MaskTrackerProcess():
         sam = sam_model_registry[model_type](checkpoint=sam_checkpoint)
         sam.to(device=self._device)
         mask_generator = SamAutomaticMaskGenerator(sam,
-                                                    points_per_side=64,
+                                                    points_per_side=self._points_per_side,
                                                     # pred_iou_thresh=0.85,
                                                     # stability_score_thresh=0.85,
-                                                    crop_n_layers=2,
-                                                    crop_n_points_downscale_factor=1.5,
+                                                    crop_n_layers=self._crop_n_layers,
+                                                    crop_n_points_downscale_factor=self._crop_n_points_downscale_factor,
                                                     # min_mask_region_area=50
                                                     )
 

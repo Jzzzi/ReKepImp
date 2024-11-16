@@ -8,6 +8,7 @@ from scipy.spatial.transform import Rotation as R
 
 def get_cam_points(depth:np.ndarray, instrinsics:np.ndarray)->np.ndarray:
     '''
+    depth: [H, W], depth image in z16 format
     points, [H, W, 3], 3D points in camera coordinate
     '''
     h, w = depth.shape
@@ -26,7 +27,7 @@ def get_points(depth:np.ndarray, instrinsics:np.ndarray, extrinsics:np.ndarray)-
     Transforms depth map points from camera coordinates to world coordinates.
 
     Args:
-        depth (np.ndarray): A 2D array representing the depth map.
+        depth (np.ndarray): A 2D array representing the depth image in z16 format.
         instrinsics (np.ndarray): A 3x3 array representing the camera intrinsic parameters.
         extrinsics (np.ndarray): A 4x4 array representing the camera-to-world transformation matrix (extrinsics).
 

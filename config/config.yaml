@@ -36,13 +36,29 @@ mask_tracker:
   device: *device
   max_mask_ratio: 0.2
   min_mask_ratio: 0.005
+  # SAM params
+  points_per_side: 48
+  crop_n_layers: 0
+  crop_n_points_downscale_factor: 1.0
+
 
 keypoint_tracker:
-  num_candidates_per_mask: 5
+  num_candidates_per_mask: 3
   min_dist_bt_keypoints: 0.01
   max_mask_ratio: 1
   device: *device
   bounds_min: *bounds_min
   bounds_max: *bounds_max
   seed: *seed
+
+enviroment:
+  bounds_min: *bounds_min
+  bounds_max: *bounds_max
+  interpolate_pos_step_size: 0.01
+  interpolate_rot_step_size: 0.01
+  w2a: 
+    - [0.9994551, -0.01450361, -0.02965028, 0.58004867]
+    - [0.01355799, 0.99940074, -0.03184862, 0.15271253]
+    - [0.03009443, 0.03142927, 0.99905281, 0.02702165]
+    - [0.0, 0.0, 0.0, 1.0]
 

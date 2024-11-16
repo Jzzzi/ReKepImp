@@ -74,13 +74,16 @@ class KeypointTrackerProcess():
         return self._result_queue.get()
     
     def _run(self):
+        print(GREEN + f"[KeypointTracker]: Loading DINO model" + RESET)
         self._dinov2 = torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14').eval().to(self._device)
+        print(GREEN + f"[KeypointTracker]: DINO model loaded" + RESET)
         while not self._stop_event.is_set():
             try:
                 data = self._data_queue.get(timeout=1)
             except:
-                # print(YELLOW + f"[KeypointTracker]: No data received in 1 seconds." + RESET)
+                print(YELLOW + f"[KeypointTracker]: No data received." + RESET)
                 continue
+            # print(GREEN + f"[KeypointTracker]: Received data" + RESET)
             rgb, points, masks = data["rgb"], data["points"], data["masks"]
             keypoints, projected = self._get_keypoints(rgb, points, masks)
             result = {
@@ -191,14 +194,14 @@ class KeypointTrackerProcess():
         # convert masks to binary masks
         binary_masks = [masks == uid for uid in objects]
         for id, binary_mask in enumerate(binary_masks):
-            # ignore mask that is too large
+            # ignore mask that is too large or too small
             rigid_group_id = objects[id]
             if np.mean(binary_mask) > self._config['max_mask_ratio']:
                 continue
             # consider only foreground features
-            obj_features_flat = features_flat[binary_mask.reshape(-1)]
-            feature_pixels = np.argwhere(binary_mask)
-            feature_points = points[binary_mask]
+            obj_features_flat = features_flat[binary_mask.reshape(-1)] # (N, feature_dim)
+            feature_pixels = np.argwhere(binary_mask) # (N, 2)
+            feature_points = points[binary_mask] # (N, 3)
             # reduce dimensionality to be less sensitive to noise and texture
             obj_features_flat = obj_features_flat.double()
             (u, s, v) = torch.pca_lowrank(obj_features_flat, center=False)
@@ -207,7 +210,10 @@ class KeypointTrackerProcess():
             X = features_pca
             assert not torch.isnan(X).any() and not torch.isinf(X).any(), "Input data contains NaN or Inf values."
             # add feature_pixels as extra dimensions
-            feature_points_torch = torch.tensor(feature_points, dtype=features_pca.dtype, device=features_pca.device)
+            feature_points_torch = torch.tensor(feature_points, dtype=features_pca.dtype, device=features_pca.device) # (N, 3)
+            if (torch.abs(feature_points_torch.max(0)[0] - feature_points_torch.min(0)[0])<1e-6).any():
+                print(YELLOW + f"[KeypointTracker]: Mask {rigid_group_id} has odd points" + RESET)
+                continue
             feature_points_torch  = (feature_points_torch - feature_points_torch.min(0)[0]) / (feature_points_torch.max(0)[0] - feature_points_torch.min(0)[0])
             assert not torch.isnan(feature_points_torch).any() and not torch.isinf(feature_points_torch).any(), "Input data contains NaN or Inf values."
             X = torch.cat([X, feature_points_torch], dim=-1)
@@ -254,7 +260,7 @@ class KeypointTrackerProcess():
         candidate_pixels = []
         for idx, feature in enumerate(self._keypoint_features):
             mask_id = keypoint_to_mask_id[idx]
-            binary_mask = masks == mask_id
+            binary_mask = (masks == mask_id)
             if binary_mask.sum() < 10:
                 # mask of this keypoint is not exist or too small
                 candidate_keypoints.append(None)

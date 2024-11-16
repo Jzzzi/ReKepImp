@@ -9,6 +9,8 @@ from utils.utils import mat2quat, quat2mat
 
 if __name__ == "__main__":
     bot = airbot.create_agent(end_mode="gripper")
+    data = bot.get_current_pose()
+    joint = bot.get_current_joint_q()
     w2a = np.array(
         [[ 0.9994551,  -0.01450361, -0.02965028,  0.58004867],
         [ 0.01355799,  0.99940074, -0.03184862,  0.15271253],
@@ -21,7 +23,10 @@ if __name__ == "__main__":
             time.sleep(0.5)
     # a2w = np.linalg.inv(w2a)
     while True:
-        x, y, z = input("Enter the target position (x y z): ").split(' ')
+        try:
+            x, y, z = input("Enter the target position (x y z): ").split(' ')
+        except:
+            break
         x = float(x)
         y = float(y)
         z = float(z)
