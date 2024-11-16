@@ -33,7 +33,7 @@ class Main:
         self._subgoal_solver = SubgoalSolver()
         self._path_solver = PathSolver()
         # initialize visualizer
-        if self.visualize:
+        if self._visualize:
             self._visualizer = Visualizer()
 # for test
 if __name__ == '__main__':

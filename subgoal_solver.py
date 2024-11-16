@@ -1,43 +1,52 @@
-import numpy as np
 import time
 import copy
+import os
+import sys
+
+import numpy as np
 from scipy.optimize import dual_annealing, minimize
 from scipy.interpolate import RegularGridInterpolator
-import transform_utils as T
-from utils import (
-    transform_keypoints,
-    calculate_collision_cost,
-    normalize_vars,
-    unnormalize_vars,
-    farthest_point_sampling,
-    consistency,
-)
+
+sys.path.append(os.path.dirname(__file__))
+from utils.utils import unnormalize_vars, normalize_vars, pose2mat, euler2quat, consistency, transform_keypoints, farthest_point_sampling, quat2euler
+# import transform_utils as T
+# from utils import (
+#     transform_keypoints,
+#     calculate_collision_cost,
+#     normalize_vars,
+#     unnormalize_vars,
+#     farthest_point_sampling,
+#     consistency,
+# )
+
 def objective(opt_vars,
             og_bounds,
             keypoints_centered,
             keypoint_movable_mask,
             goal_constraints,
             path_constraints,
-            sdf_func,
-            collision_points_centered,
             init_pose_homo,
-            ik_solver,
-            initial_joint_pos,
-            reset_joint_pos,
             is_grasp_stage,
+            sdf_func = None,
+            collision_points_centered = None,
+            ik_solver = None,
+            initial_joint_pos = None,
+            reset_joint_pos = None,
             return_debug_dict=False):
-
+    '''
+    The function to calculate the optimization objective.
+    '''
     debug_dict = {}
     # unnormalize variables and do conversion
     opt_pose = unnormalize_vars(opt_vars, og_bounds)
-    opt_pose_homo = T.pose2mat([opt_pose[:3], T.euler2quat(opt_pose[3:])])
+    opt_pose_homo = pose2mat([opt_pose[:3], euler2quat(opt_pose[3:])])
 
     cost = 0
     # collision cost
-    if collision_points_centered is not None:
-        collision_cost = 0.8 * calculate_collision_cost(opt_pose_homo[None], sdf_func, collision_points_centered, 0.10)
-        debug_dict['collision_cost'] = collision_cost
-        cost += collision_cost
+    # if collision_points_centered is not None:
+    #     collision_cost = 0.8 * calculate_collision_cost(opt_pose_homo[None], sdf_func, collision_points_centered, 0.10)
+    #     debug_dict['collision_cost'] = collision_cost
+    #     cost += collision_cost
 
     # stay close to initial pose
     init_pose_cost = 1.0 * consistency(opt_pose_homo[None], init_pose_homo[None], rot_weight=1.5)
@@ -45,25 +54,25 @@ def objective(opt_vars,
     cost += init_pose_cost
 
     # reachability cost (approximated by number of IK iterations + regularization from reset joint pos)
-    max_iterations = 20
-    ik_result = ik_solver.solve(
-                    opt_pose_homo,
-                    max_iterations=max_iterations,
-                    initial_joint_pos=initial_joint_pos,
-                )
-    ik_cost = 20.0 * (ik_result.num_descents / max_iterations)
-    debug_dict['ik_feasible'] = ik_result.success
-    debug_dict['ik_pos_error'] = ik_result.position_error
-    debug_dict['ik_cost'] = ik_cost
-    cost += ik_cost
-    if ik_result.success:
-        reset_reg = np.linalg.norm(ik_result.cspace_position[:-1] - reset_joint_pos[:-1])
-        reset_reg = np.clip(reset_reg, 0.0, 3.0)
-    else:
-        reset_reg = 3.0
-    reset_reg_cost = 0.2 * reset_reg
-    debug_dict['reset_reg_cost'] = reset_reg_cost
-    cost += reset_reg_cost
+    # max_iterations = 20
+    # ik_result = ik_solver.solve(
+    #                 opt_pose_homo,
+    #                 max_iterations=max_iterations,
+    #                 initial_joint_pos=initial_joint_pos,
+    #             )
+    # ik_cost = 20.0 * (ik_result.num_descents / max_iterations)
+    # debug_dict['ik_feasible'] = ik_result.success
+    # debug_dict['ik_pos_error'] = ik_result.position_error
+    # debug_dict['ik_cost'] = ik_cost
+    # cost += ik_cost
+    # if ik_result.success:
+    #     reset_reg = np.linalg.norm(ik_result.cspace_position[:-1] - reset_joint_pos[:-1])
+    #     reset_reg = np.clip(reset_reg, 0.0, 3.0)
+    # else:
+    #     reset_reg = 3.0
+    # reset_reg_cost = 0.2 * reset_reg
+    # debug_dict['reset_reg_cost'] = reset_reg_cost
+    # cost += reset_reg_cost
 
     # grasp metric (better performance if using anygrasp or force-based grasp metrics)
     if is_grasp_stage:
@@ -210,15 +219,15 @@ class SubgoalSolver:
         # = setup bounds and initial guess
         # ====================================
         ee_pose = ee_pose.astype(np.float64)
-        ee_pose_homo = T.pose2mat([ee_pose[:3], ee_pose[3:]])
-        ee_pose_euler = np.concatenate([ee_pose[:3], T.quat2euler(ee_pose[3:])])
+        ee_pose_homo = pose2mat([ee_pose[:3], ee_pose[3:]]) # pose matrix
+        ee_pose_euler = np.concatenate([ee_pose[:3], quat2euler(ee_pose[3:])])
         # normalize opt variables to [0, 1]
         pos_bounds_min = self.config['bounds_min']
         pos_bounds_max = self.config['bounds_max']
         rot_bounds_min = np.array([-np.pi, -np.pi, -np.pi])  # euler angles
         rot_bounds_max = np.array([np.pi, np.pi, np.pi])  # euler angles
         og_bounds = [(b_min, b_max) for b_min, b_max in zip(np.concatenate([pos_bounds_min, rot_bounds_min]), np.concatenate([pos_bounds_max, rot_bounds_max]))]
-        bounds = [(-1, 1)] * len(og_bounds)
+        bounds = [(-1, 1)] * len(og_bounds) # 
         if not from_scratch and self.last_opt_result is not None:
             init_sol = self.last_opt_result.x
         else:
@@ -229,6 +238,7 @@ class SubgoalSolver:
         # = other setup
         # ====================================
         collision_points_centered, keypoints_centered = self._center_collision_points_and_keypoints(ee_pose_homo, collision_points, keypoints, keypoint_movable_mask)
+        # TODO
         aux_args = (og_bounds,
                     keypoints_centered,
                     keypoint_movable_mask,
@@ -286,7 +296,7 @@ class SubgoalSolver:
         debug_dict['type'] = 'subgoal_solver'
         # unnormailze
         sol = unnormalize_vars(opt_result.x, og_bounds)
-        sol = np.concatenate([sol[:3], T.euler2quat(sol[3:])])
+        sol = np.concatenate([sol[:3], euler2quat(sol[3:])])
         opt_result = self._check_opt_result(opt_result, debug_dict)
         # cache opt_result for future use if successful
         if opt_result.success:
