@@ -24,7 +24,7 @@ class RealEnviroment:
         Initializes the real-world environment with configuration and scene file.
         
         Parameters:
-            config (dict): Configuration dictionary for the environment.
+            config (dict): Configuration dictionary for the environment. (Global config)
             scene_file (str): Path to the scene file.
             verbose (bool): If True, provides additional logging.
         '''

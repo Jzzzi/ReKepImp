@@ -1,5 +1,7 @@
 import sys
 import os
+import yaml
+
 
 import numpy as np
 import torch
@@ -87,3 +89,17 @@ def mat2quat(matrix:np.array)->np.array:
         np.array: A 4-element array representing the quaternion, q = [x, y, z, w].
     '''
     return R.from_matrix(matrix).as_quat()
+
+def get_config(path="/home/liujk/ReKepImp/config/config.yaml") -> dict:
+    '''
+    Load config file
+
+    Args:
+        path (str): Path to the config file.
+
+    Returns:
+        dict: A dictionary containing the config file.
+    '''
+    with open(path, 'r') as f:
+        config = yaml.load(f, Loader=yaml.FullLoader)
+    return config
