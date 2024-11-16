@@ -361,6 +361,7 @@ class RealEnviroment:
         Parameters:
             action (np.ndarray): Array of [x, y, z, qx, qy, qz, qw, gripper_action].
             precise (bool): If True, performs precise movement with small thresholds.
+            wait (bool): If True, waits for the robot to reach the target pose before returning.
         
         Returns:
             tuple: (position error, rotation error) after reaching the target pose.
