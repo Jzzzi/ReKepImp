@@ -31,7 +31,7 @@ class Main:
         # initialize solvers
         self._subgoal_solver = SubgoalSolver(self._global_config['subgoal_solver'])
         # TODO set the path solver
-        self._path_solver = PathSolver()
+        self._path_solver = PathSolver(self._global_config['path_solver'])
         # initialize visualizer
         # if self._visualize:
         #     self._visualizer = Visualizer()
