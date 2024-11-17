@@ -15,17 +15,22 @@ def encode_image(image_path):
 
 class ConstraintGenerator:
     def __init__(self, config):
-        self.config = config
-        self.client = OpenAI(api_key=os.environ['OPENAI_API_KEY'])
-        self.base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), './vlm_query')
-        with open(os.path.join(self.base_dir, 'prompt_template.txt'), 'r') as f:
-            self.prompt_template = f.read()
+        '''
+        Args:
+            config (dict): configuration for the constraint generator
+        '''
+        self._config = config
+        self._client = OpenAI(api_key=os.environ['OPENAI_API_KEY'])
+        self._base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), './vlm_query')
+        self._task_dir = None # Set in self.generate, the timestamped directory for the task
+        with open(os.path.join(self._base_dir, 'prompt_template.txt'), 'r') as f:
+            self._prompt_template = f.read()
 
     def _build_prompt(self, image_path, instruction):
         img_base64 = encode_image(image_path)
-        prompt_text = self.prompt_template.format(instruction=instruction)
+        prompt_text = self._prompt_template.format(instruction=instruction)
         # save prompt
-        with open(os.path.join(self.task_dir, 'prompt.txt'), 'w') as f:
+        with open(os.path.join(self._task_dir, 'prompt.txt'), 'w') as f:
             f.write(prompt_text)
         messages = [
             {
@@ -33,7 +38,7 @@ class ConstraintGenerator:
                 "content": [
                     {
                         "type": "text",
-                        "text": self.prompt_template.format(instruction=instruction)
+                        "text": self._prompt_template.format(instruction=instruction)
                     },
                     {
                         "type": "image_url",
@@ -113,9 +118,9 @@ class ConstraintGenerator:
         for k, v in metadata.items():
             if isinstance(v, np.ndarray):
                 metadata[k] = v.tolist()
-        with open(os.path.join(self.task_dir, 'metadata.json'), 'w') as f:
+        with open(os.path.join(self._task_dir, 'metadata.json'), 'w') as f:
             json.dump(metadata, f)
-        print(f"Metadata saved to {os.path.join(self.task_dir, 'metadata.json')}")
+        print(f"Metadata saved to {os.path.join(self._task_dir, 'metadata.json')}")
 
     def generate(self, img, instruction, metadata):
         """
@@ -127,18 +132,18 @@ class ConstraintGenerator:
         """
         # create a directory for the task
         fname = datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + "_" + instruction.lower().replace(" ", "_")
-        self.task_dir = os.path.join(self.base_dir, fname)
-        os.makedirs(self.task_dir, exist_ok=True)
+        self._task_dir = os.path.join(self._base_dir, fname)
+        os.makedirs(self._task_dir, exist_ok=True)
         # save query image
-        image_path = os.path.join(self.task_dir, 'query_img.png')
+        image_path = os.path.join(self._task_dir, 'query_img.png')
         cv2.imwrite(image_path, img[..., ::-1])
         # build prompt
         messages = self._build_prompt(image_path, instruction)
         # stream back the response
-        stream = self.client.chat.completions.create(model=self.config['model'],
+        stream = self._client.chat.completions.create(model=self._config['model'],
                                                         messages=messages,
-                                                        temperature=self.config['temperature'],
-                                                        max_tokens=self.config['max_tokens'],
+                                                        temperature=self._config['temperature'],
+                                                        max_tokens=self._config['max_tokens'],
                                                         stream=True)
         output = ""
         start = time.time()
@@ -148,11 +153,11 @@ class ConstraintGenerator:
                 output += chunk.choices[0].delta.content
         print(f'[{time.time()-start:.2f}s] Querying OpenAI API...Done')
         # save raw output
-        with open(os.path.join(self.task_dir, 'output_raw.txt'), 'w') as f:
+        with open(os.path.join(self._task_dir, 'output_raw.txt'), 'w') as f:
             f.write(output)
         # parse and save constraints
-        self._parse_and_save_constraints(output, self.task_dir)
+        self._parse_and_save_constraints(output, self._task_dir)
         # save metadata
         metadata.update(self._parse_other_metadata(output))
         self._save_metadata(metadata)
-        return self.task_dir
+        return self._task_dir

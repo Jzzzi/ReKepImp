@@ -198,6 +198,9 @@ def consistency(poses_a, poses_b, rot_weight=0.5):
     return np.mean(min_distances)
 
 def transform_keypoints(transform, keypoints, movable_mask):
+    '''
+    Transform movable keypoints using a 4x4 transformation matrix.
+    '''
     assert transform.shape == (4, 4)
     transformed_keypoints = keypoints.copy()
     if movable_mask.sum() > 0:

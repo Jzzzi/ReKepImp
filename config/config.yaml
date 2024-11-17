@@ -1,7 +1,7 @@
 device: &device 'cuda'
 seed: &seed 0
-bounds_min: &bounds_min [-10.0, -10.0, -0.01]
-bounds_max: &bounds_max [10.0, 10.0, 10.0]
+bounds_min: &bounds_min [-1, -0.8, 0.0]
+bounds_max: &bounds_max [0.3, 0.0, 0.8]
 path: &path '/home/liujk/ReKepImp'
 instrinsics: &instrinsics [386.74, 0, 326.66, 0, 386.28, 247.33, 0, 0, 1]
 distortions: &distortions [-0.0556738413870335, 0.0655610412359238, -0.000339997815899551, 0.000355891766957939, -0.021365724503994]
@@ -62,3 +62,28 @@ enviroment:
     - [0.03009443, 0.03142927, 0.99905281, 0.02702165]
     - [0.0, 0.0, 0.0, 1.0]
 
+subgoal_solver:
+  bounds_min: *bounds_min
+  bounds_max: *bounds_max
+  sampling_maxfun: 5000
+  max_collision_points: 60
+  constraint_tolerance: 0.0001
+  minimizer_options:
+    maxiter: 200
+
+constraint_generator:
+  model: chatgpt-4o-latest
+  temperature: 0.0
+  max_tokens: 2048
+
+main:
+  interpolate_pos_step_size: 0.05  # controls the density of the final returned path
+  interpolate_rot_step_size: 0.34  # about 20 degrees
+  grasp_depth: 0.10
+  constraint_tolerance: 0.10  # for backtracking
+  bounds_min: *bounds_min
+  bounds_max: *bounds_max
+  sdf_voxel_size: 0.01
+  vlm_camera: 0
+  action_steps_per_iter: 5
+  seed: *seed

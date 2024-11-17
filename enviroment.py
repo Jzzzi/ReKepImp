@@ -33,8 +33,9 @@ class RealEnviroment:
         self.verbose = verbose
         self.bounds_min = np.array(self._config['enviroment']['bounds_min'])
         self.bounds_max = np.array(self._config['enviroment']['bounds_max'])
-        self.interpolate_pos_step_size = self._config['enviroment']['interpolate_pos_step_size']
-        self.interpolate_rot_step_size = self._config['enviroment']['interpolate_rot_step_size']
+        # Not needed
+        # self._interpolate_pos_step_size = self._config['enviroment']['interpolate_pos_step_size']
+        # self._interpolate_rot_step_size = self._config['enviroment']['interpolate_rot_step_size']
         self.step_counter = 0
 
         self._rs = None

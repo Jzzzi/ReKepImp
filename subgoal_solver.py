@@ -20,7 +20,7 @@ from utils.utils import unnormalize_vars, normalize_vars, pose2mat, euler2quat, 
 # )
 
 def objective(opt_vars,
-            og_bounds,
+            bounds,
             keypoints_centered,
             keypoint_movable_mask,
             goal_constraints,
@@ -32,14 +32,17 @@ def objective(opt_vars,
             ik_solver = None,
             initial_joint_pos = None,
             reset_joint_pos = None,
-            return_debug_dict=False):
+            return_debug_dict = False):
     '''
     The function to calculate the optimization objective.
+    Args:
+        opt_vars: variables to be optimized.
+        keypoints_centered: 
     '''
     debug_dict = {}
     # unnormalize variables and do conversion
-    opt_pose = unnormalize_vars(opt_vars, og_bounds)
-    opt_pose_homo = pose2mat([opt_pose[:3], euler2quat(opt_pose[3:])])
+    opt_pose = unnormalize_vars(opt_vars, bounds)
+    opt_pose_homo = pose2mat([opt_pose[:3], euler2quat(opt_pose[3:])]) # 4*4 matrix of 
 
     cost = 0
     # collision cost
@@ -122,11 +125,17 @@ def objective(opt_vars,
 
 
 class SubgoalSolver:
-    def __init__(self, config, ik_solver, reset_joint_pos):
-        self.config = config
-        self.ik_solver = ik_solver
-        self.reset_joint_pos = reset_joint_pos
-        self.last_opt_result = None
+    def __init__(self, config, ik_solver = None, reset_joint_pos = None):
+        '''
+        Args:
+            config: config about subgoalsolver
+            ik_solver: not needed now.
+            reset_joint_pos: not needed now
+        '''
+        self._config = config
+        self._ik_solver = ik_solver
+        self._reset_joint_pos = reset_joint_pos
+        self._last_opt_result = None
         # warmup
         self._warmup()
 
@@ -139,13 +148,13 @@ class SubgoalSolver:
         sdf_voxels = np.zeros((10, 10, 10))
         collision_points = np.random.rand(100, 3)
         self.solve(ee_pose, keypoints, keypoint_movable_mask, goal_constraints, path_constraints, sdf_voxels, collision_points, True, None, from_scratch=True)
-        self.last_opt_result = None
+        self._last_opt_result = None
 
     def _setup_sdf(self, sdf_voxels):
         # create callable sdf function with interpolation
-        x = np.linspace(self.config['bounds_min'][0], self.config['bounds_max'][0], sdf_voxels.shape[0])
-        y = np.linspace(self.config['bounds_min'][1], self.config['bounds_max'][1], sdf_voxels.shape[1])
-        z = np.linspace(self.config['bounds_min'][2], self.config['bounds_max'][2], sdf_voxels.shape[2])
+        x = np.linspace(self._config['bounds_min'][0], self._config['bounds_max'][0], sdf_voxels.shape[0])
+        y = np.linspace(self._config['bounds_min'][1], self._config['bounds_max'][1], sdf_voxels.shape[1])
+        z = np.linspace(self._config['bounds_min'][2], self._config['bounds_max'][2], sdf_voxels.shape[2])
         sdf_func = RegularGridInterpolator((x, y, z), sdf_voxels, bounds_error=False, fill_value=0)
         return sdf_func
 
@@ -159,7 +168,7 @@ class SubgoalSolver:
         if debug_dict['subgoal_violation'] is not None:
             goal_constraints_results = np.array(debug_dict['subgoal_violation'])
             opt_result.message += f'; goal_constraints_results: {goal_constraints_results} (higher is worse)'
-            goal_constraints_satisfied = all([violation <= self.config['constraint_tolerance'] for violation in goal_constraints_results])
+            goal_constraints_satisfied = all([violation <= self._config['constraint_tolerance'] for violation in goal_constraints_results])
             if not goal_constraints_satisfied:
                 opt_result.success = False
                 opt_result.message += f'; goal not satisfied'
@@ -167,7 +176,7 @@ class SubgoalSolver:
         if debug_dict['path_violation'] is not None:
             path_constraints_results = np.array(debug_dict['path_violation'])
             opt_result.message += f'; path_constraints_results: {path_constraints_results}'
-            path_constraints_satisfied = all([violation <= self.config['constraint_tolerance'] for violation in path_constraints_results])
+            path_constraints_satisfied = all([violation <= self._config['constraint_tolerance'] for violation in path_constraints_results])
             if not path_constraints_satisfied:
                 opt_result.success = False
                 opt_result.message += f'; path not satisfied'
@@ -178,7 +187,10 @@ class SubgoalSolver:
         return opt_result
     
     def _center_collision_points_and_keypoints(self, ee_pose_homo, collision_points, keypoints, keypoint_movable_mask):
-        centering_transform = np.linalg.inv(ee_pose_homo)
+        '''
+        Convert keypoints coordinates to arm coordinates. Object grasped will  
+        '''
+        centering_transform = np.linalg.inv(ee_pose_homo) # w2a
         collision_points_centered = np.dot(collision_points, centering_transform[:3, :3].T) + centering_transform[:3, 3]
         keypoints_centered = transform_keypoints(centering_transform, keypoints, keypoint_movable_mask)
         return collision_points_centered, keypoints_centered
@@ -197,7 +209,7 @@ class SubgoalSolver:
             ):
         """
         Args:
-            - ee_pose (np.ndarray): [7], [x, y, z, qx, qy, qz, qw] end effector pose.
+            - ee_pose (np.ndarray): [7], [x, y, z, qx, qy, qz, qw] current end effector pose.
             - keypoints (np.ndarray): [M, 3] keypoint positions.
             - keypoint_movable_mask (bool): [M] boolean array indicating whether the keypoint is on the grasped object.
             - goal_constraints (List[Callable]): subgoal constraint functions.
@@ -212,45 +224,41 @@ class SubgoalSolver:
             - debug_dict (dict): debug information.
         """
         # downsample collision points
-        if collision_points is not None and collision_points.shape[0] > self.config['max_collision_points']:
-            collision_points = farthest_point_sampling(collision_points, self.config['max_collision_points'])
+        if collision_points is not None and collision_points.shape[0] > self._config['max_collision_points']:
+            collision_points = farthest_point_sampling(collision_points, self._config['max_collision_points'])
         sdf_func = self._setup_sdf(sdf_voxels)
         # ====================================
         # = setup bounds and initial guess
         # ====================================
         ee_pose = ee_pose.astype(np.float64)
-        ee_pose_homo = pose2mat([ee_pose[:3], ee_pose[3:]]) # pose matrix
-        ee_pose_euler = np.concatenate([ee_pose[:3], quat2euler(ee_pose[3:])])
-        # normalize opt variables to [0, 1]
-        pos_bounds_min = self.config['bounds_min']
-        pos_bounds_max = self.config['bounds_max']
+        ee_pose_homo = pose2mat([ee_pose[:3], ee_pose[3:]]) # end pose matrix
+        ee_pose_euler = np.concatenate([ee_pose[:3], quat2euler(ee_pose[3:])]) # translation + euler angles
+        # normalize opt variables to [0, 1] 
+        pos_bounds_min = self._config['bounds_min']
+        pos_bounds_max = self._config['bounds_max']
         rot_bounds_min = np.array([-np.pi, -np.pi, -np.pi])  # euler angles
         rot_bounds_max = np.array([np.pi, np.pi, np.pi])  # euler angles
-        og_bounds = [(b_min, b_max) for b_min, b_max in zip(np.concatenate([pos_bounds_min, rot_bounds_min]), np.concatenate([pos_bounds_max, rot_bounds_max]))]
-        bounds = [(-1, 1)] * len(og_bounds) # 
-        if not from_scratch and self.last_opt_result is not None:
-            init_sol = self.last_opt_result.x
+        bounds = [(b_min, b_max) for b_min, b_max in zip(np.concatenate([pos_bounds_min, rot_bounds_min]), np.concatenate([pos_bounds_max, rot_bounds_max]))] # bounds as list of tuple [(b1_min, b1_max),(b2_min, b2_max),...]
+        bounds = [(-1, 1)] * len(bounds) # normalized bounds
+        if not from_scratch and self._last_opt_result is not None:
+            init_sol = self._last_opt_result.x
         else:
-            init_sol = normalize_vars(ee_pose_euler, og_bounds)  # start from the current pose
+            init_sol = normalize_vars(ee_pose_euler, bounds)  # start from the current pose
             from_scratch = True
 
         # ====================================
         # = other setup
         # ====================================
-        collision_points_centered, keypoints_centered = self._center_collision_points_and_keypoints(ee_pose_homo, collision_points, keypoints, keypoint_movable_mask)
+        collision_points_centered, keypoints_centered = self._center_collision_points_and_keypoints(ee_pose_homo, collision_points, keypoints, keypoint_movable_mask) # move points to arm frame
         # TODO
-        aux_args = (og_bounds,
+        aux_args = (bounds,
                     keypoints_centered,
                     keypoint_movable_mask,
                     goal_constraints,
                     path_constraints,
-                    sdf_func,
-                    collision_points_centered,
                     ee_pose_homo,
-                    self.ik_solver,
-                    initial_joint_pos,
-                    self.reset_joint_pos,
-                    is_grasp_stage)
+                    is_grasp_stage,
+                    )
 
         # ====================================
         # = solve optimization
@@ -262,12 +270,12 @@ class SubgoalSolver:
                 func=objective,
                 bounds=bounds,
                 args=aux_args,
-                maxfun=self.config['sampling_maxfun'],
+                maxfun=self._config['sampling_maxfun'],
                 x0=init_sol,
                 no_local_search=False,
                 minimizer_kwargs={
                     'method': 'SLSQP',
-                    'options': self.config['minimizer_options'],
+                    'options': self._config['minimizer_options'],
                 },
             )
         # use gradient-based local optimization for the following iterations
@@ -278,7 +286,7 @@ class SubgoalSolver:
                 args=aux_args,
                 bounds=bounds,
                 method='SLSQP',
-                options=self.config['minimizer_options'],
+                options=self._config['minimizer_options'],
             )
         solve_time = time.time() - start
 
@@ -295,10 +303,10 @@ class SubgoalSolver:
         debug_dict['from_scratch'] = from_scratch
         debug_dict['type'] = 'subgoal_solver'
         # unnormailze
-        sol = unnormalize_vars(opt_result.x, og_bounds)
+        sol = unnormalize_vars(opt_result.x, bounds)
         sol = np.concatenate([sol[:3], euler2quat(sol[3:])])
         opt_result = self._check_opt_result(opt_result, debug_dict)
         # cache opt_result for future use if successful
         if opt_result.success:
-            self.last_opt_result = copy.deepcopy(opt_result)
+            self._last_opt_result = copy.deepcopy(opt_result)
         return sol, debug_dict
