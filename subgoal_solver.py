@@ -36,8 +36,13 @@ def objective(opt_vars,
     '''
     The function to calculate the optimization objective.
     Args:
-        opt_vars: variables to be optimized.
-        keypoints_centered: 
+        opt_vars: np.ndarray, [7], the pose to be optimized
+        keypoints_centered: np.ndarray, [N, 3]
+        keypoint_movable_mask: np.ndarray
+        goal_constraints: list of subgoal constraint functions
+        path_constraints: list of path constraint functions
+        init_pose_homo: np.ndarray, [4, 4], initial pose matrix
+        is_grasp_stage: bool
     '''
     debug_dict = {}
     # unnormalize variables and do conversion
@@ -188,7 +193,7 @@ class SubgoalSolver:
     
     def _center_collision_points_and_keypoints(self, ee_pose_homo, collision_points, keypoints, keypoint_movable_mask):
         '''
-        Convert keypoints coordinates to arm coordinates. Object grasped will  
+        Convert keypoints coordinates to arm coordinates. Only objects grasped will be transformed. (Seems to be with issue.)  
         '''
         centering_transform = np.linalg.inv(ee_pose_homo) # w2a
         collision_points_centered = np.dot(collision_points, centering_transform[:3, :3].T) + centering_transform[:3, 3]
@@ -238,6 +243,7 @@ class SubgoalSolver:
         pos_bounds_max = self._config['bounds_max']
         rot_bounds_min = np.array([-np.pi, -np.pi, -np.pi])  # euler angles
         rot_bounds_max = np.array([np.pi, np.pi, np.pi])  # euler angles
+        # BUG
         bounds = [(b_min, b_max) for b_min, b_max in zip(np.concatenate([pos_bounds_min, rot_bounds_min]), np.concatenate([pos_bounds_max, rot_bounds_max]))] # bounds as list of tuple [(b1_min, b1_max),(b2_min, b2_max),...]
         bounds = [(-1, 1)] * len(bounds) # normalized bounds
         if not from_scratch and self._last_opt_result is not None:
@@ -249,6 +255,7 @@ class SubgoalSolver:
         # ====================================
         # = other setup
         # ====================================
+        # BUG
         collision_points_centered, keypoints_centered = self._center_collision_points_and_keypoints(ee_pose_homo, collision_points, keypoints, keypoint_movable_mask) # move points to arm frame
         # TODO
         aux_args = (bounds,
