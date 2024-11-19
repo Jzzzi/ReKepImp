@@ -76,6 +76,9 @@ class RealSense():
         print(GREEN + "[RealSense]: RealSense sensor stopped." + RESET)    
 
     def get_instrinsics(self):
+        '''
+        return instrinsics matrix, np.ndarray, [3, 3]
+        '''
         return self._instrinsics
     
     def _run(self):

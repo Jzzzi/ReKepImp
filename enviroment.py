@@ -36,7 +36,7 @@ class RealEnviroment:
         # Not needed
         # self._interpolate_pos_step_size = self._config['enviroment']['interpolate_pos_step_size']
         # self._interpolate_rot_step_size = self._config['enviroment']['interpolate_rot_step_size']
-        self.step_counter = 0
+        # self._step_counter = 0
 
         self._rs = None
         self._mask_tracker = None
@@ -80,7 +80,10 @@ class RealEnviroment:
         points = get_points(depth, instrinsics, extrinsics)
         self._mask_tracker = MaskTrackerProcess(config['mask_tracker'])
         self._mask_tracker.start()
-        self._mask_tracker.send(data['color'])
+        self._mask_tracker.send({
+            'rgb': rgb,
+            'points': points,
+        })
         masks = self._mask_tracker.get()
         self._keypoint_tracker = KeypointTrackerProcess(config['keypoint_tracker'])
         self._keypoint_tracker.start()
@@ -129,7 +132,10 @@ class RealEnviroment:
         extrinsics = data['extrinsics']
         points = get_points(depth, instrinsics, extrinsics)
 
-        self._mask_tracker.send(data['color'])
+        self._mask_tracker.send({
+            'rgb': rgb,
+            'points': points,
+        })
         mask = self._mask_tracker.get()
         return {
             'rgb': rgb,
@@ -153,7 +159,10 @@ class RealEnviroment:
         instrinsics = self._config['realsense']['instrinsics']
         extrinsics = data['extrinsics']
         points = get_points(depth, instrinsics, extrinsics)
-        self._mask_tracker.send(data['color'])
+        self._mask_tracker.send({
+            "rgb": rgb,
+            "points": points,
+        })
         masks = self._mask_tracker.get()
         self._keypoint_tracker.send({"rgb": rgb, "points": points, "masks": masks})
         res = self._keypoint_tracker.get()
@@ -167,6 +176,7 @@ class RealEnviroment:
         
         Returns:
             np.ndarray: Array of keypoint positions, shape (N, 3).
+            np.ndaary: Array of projected keypoint positions, shape (N, 2).
         '''
         data = None
         while data is None:
@@ -176,7 +186,10 @@ class RealEnviroment:
         instrinsics = self._config['realsense']['instrinsics']
         extrinsics = data['extrinsics']
         points = get_points(depth, instrinsics, extrinsics)
-        self._mask_tracker.send(data['color'])
+        self._mask_tracker.send({
+            "rgb": rgb,
+            "points": points,
+        })
         masks = self._mask_tracker.get()
         self._keypoint_tracker.send({"rgb": rgb, "points": points, "masks": masks})
         res = self._keypoint_tracker.get()

@@ -8,6 +8,8 @@ import cv2
 
 from cutie.inference.inference_core import InferenceCore
 from cutie.utils.get_default_model import get_default_model
+sys.path.append(os.path.dirname(__file__))
+from utils.utils import fileter_masks_by_bounds
 
 RESET = "\033[0m"
 RED = "\033[31m"
@@ -38,6 +40,10 @@ class MaskTrackerProcess():
         self._crop_n_layers = config['crop_n_layers']
         self._crop_n_points_downscale_factor = config['crop_n_points_downscale_factor']
         
+        bounds_min = np.array(config['bounds_min']).reshape(-1, 3)
+        bounds_max = np.array(config['bounds_max']).reshape(-1, 3)
+        self._bounds = np.concatenate([bounds_min, bounds_max], axis=0) # (2, 3)
+
         self._process = None
         self._segmented = False
         self._mask = None
@@ -60,7 +66,9 @@ class MaskTrackerProcess():
     
     def send(self, data):
         '''
-        Send data as np.ndarray, [H, W, 3], BGR
+        Send data dict{
+            'rgb': np.ndarray, [H, W, 3], uint8
+            'points': np.ndarray, [H, W, 3], float32, points in world frame}
         '''
         self._data_queue.put(data)
 
@@ -83,14 +91,15 @@ class MaskTrackerProcess():
             if not self._segmented:
                 # Use the first frame to generate masks by SAM
                 assert data is not None, "Data is None."
-                bgr = data
-                rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+                rgb = data['rgb']
+                points = data['points']
                 masks = self._get_sam_mask(rgb)
 
                 masks = [m['segmentation'] for m in masks]
                 print(GREEN + f"[MaskTracker]: {len(masks)} masks generated." + RESET)
                 masks = [m for m in masks if m.sum()/(m.shape[0]*m.shape[1]) < self._max_mask_ratio]
                 masks = [m for m in masks if m.sum()/(m.shape[0]*m.shape[1]) > self._min_mask_ratio]
+                masks = fileter_masks_by_bounds(masks, points, self._bounds)
                 print(GREEN + f"[MaskTracker]: {len(masks)} masks selected." + RESET)
                 self._num_objects = min(len(masks), self._num_objects)
                 # DEBUG
@@ -108,7 +117,7 @@ class MaskTrackerProcess():
 
             else:
                 # Use Cutie to track the masks
-                self._track(data)
+                self._track(data['rgb'])
         return
 
     @torch.inference_mode()
@@ -162,10 +171,8 @@ class MaskTrackerProcess():
 
     @torch.inference_mode()
     @torch.amp.autocast('cuda')
-    def _track(self, data):
+    def _track(self, rgb):
         # Track the following frames
-        bgr = data
-        rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
         rgb_tensor = to_tensor(rgb).cuda().float()/255
 
         assert self._processor is not None, "Cutie processor is None."

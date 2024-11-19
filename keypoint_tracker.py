@@ -56,7 +56,7 @@ class KeypointTrackerProcess():
         data: dict
         {
                 'rgb': np.ndarray, [H, W, 3]
-                'points': np.ndarray, [N, 3]
+                'points': np.ndarray, [H, W, 3]
                 'masks': np.ndarray, [H, W]
         }
         '''
@@ -197,6 +197,7 @@ class KeypointTrackerProcess():
             # ignore mask that is too large or too small
             rigid_group_id = objects[id]
             if np.mean(binary_mask) > self._config['max_mask_ratio']:
+                print(YELLOW + f"[KeypointTracker]: Mask {rigid_group_id} is too large" + RESET)
                 continue
             # consider only foreground features
             obj_features_flat = features_flat[binary_mask.reshape(-1)] # (N, feature_dim)
@@ -217,6 +218,9 @@ class KeypointTrackerProcess():
             feature_points_torch  = (feature_points_torch - feature_points_torch.min(0)[0]) / (feature_points_torch.max(0)[0] - feature_points_torch.min(0)[0])
             assert not torch.isnan(feature_points_torch).any() and not torch.isinf(feature_points_torch).any(), "Input data contains NaN or Inf values."
             X = torch.cat([X, feature_points_torch], dim=-1)
+            if X.shape[0] < self._config['num_candidates_per_mask']:
+                print(YELLOW + f"[KeypointTracker]: Mask {rigid_group_id} has too few points" + RESET)
+                continue
             cluster_ids_x, cluster_centers = kmeans(
                 X=X,
                 num_clusters=self._config['num_candidates_per_mask'],
@@ -265,7 +269,7 @@ class KeypointTrackerProcess():
                 # mask of this keypoint is not exist or too small
                 candidate_keypoints.append(None)
                 candidate_pixels.append(None)
-                print(RED + f"[KeypointTracker]: Mask {mask_id} is not exist or too small" + RESET)
+                print(YELLOW + f"[KeypointTracker]: Mask {mask_id} is not exist or too small" + RESET)
                 continue
             dist = torch.norm(features - feature, dim=-1)
             dist[~binary_mask] = 1e6

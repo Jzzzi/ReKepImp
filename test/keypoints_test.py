@@ -9,7 +9,7 @@ import numpy as np
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from utils.sensor import RealSense
-from utils.utils import get_cam_points
+from utils.utils import get_points
 
 from mask_tracker import MaskTrackerProcess
 from keypoint_tracker import KeypointTrackerProcess
@@ -34,14 +34,22 @@ def main():
     data = None
     while data is None:
         data = rs.get()
-    mask_tracker.send(data['color'])
+    rgb = cv2.cvtColor(data['color'], cv2.COLOR_BGR2RGB)
+    depth = data['depth']
+    insrinsics = rs.get_instrinsics()
+    extrinsics = data['extrinsics']
+    points = get_points(depth, insrinsics, extrinsics)
+    mask_tracker.send({
+        'rgb': rgb,
+        'points': points,
+    })
     mask = mask_tracker.get()
     keypoint_tracker = KeypointTrackerProcess(config['keypoint_tracker'])
     keypoint_tracker.start()
 
     keypoint_tracker.send({
-        'rgb': cv2.cvtColor(data['color'], cv2.COLOR_BGR2RGB),
-        'points': get_cam_points(data['depth'], config['realsense']['instrinsics']),
+        'rgb': rgb,
+        'points': points,
         'masks': mask,
     })
     result = keypoint_tracker.get()
@@ -51,11 +59,17 @@ def main():
         data = None
         while data is None:
             data = rs.get()
-        mask_tracker.send(data['color'])
+        rgb = cv2.cvtColor(data['color'], cv2.COLOR_BGR2RGB)
+        depth = data['depth']
+        points = get_points(depth, insrinsics, extrinsics)
+        mask_tracker.send({
+        'rgb': rgb,
+        'points': points,
+        })
         mask = mask_tracker.get()
         keypoint_tracker.send({
-            'rgb': cv2.cvtColor(data['color'], cv2.COLOR_BGR2RGB),
-            'points': get_cam_points(data['depth'], config['realsense']['instrinsics']),
+            'rgb': rgb,
+            'points': points,
             'masks': mask,
         })
         result = keypoint_tracker.get()

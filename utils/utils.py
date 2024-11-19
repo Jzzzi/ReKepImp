@@ -19,6 +19,8 @@ def get_cam_points(depth:np.ndarray, instrinsics:np.ndarray)->np.ndarray:
     h, w = depth.shape
     # conver z16 to float in unit of meters
     depth = depth.astype(float) * 0.001
+    instrinsics = instrinsics.reshape(-1)
+    assert instrinsics.shape == (9,), instrinsics.shape
     fx, fy, cx, cy = instrinsics[0], instrinsics[4], instrinsics[2], instrinsics[5]
     direction_x, direction_y = np.meshgrid(np.arange(w), np.arange(h), indexing='xy')
     direction_x = (direction_x.astype(float) - cx) / fx
@@ -524,3 +526,19 @@ def mat2euler(rmat):
     """
     M = np.array(rmat, dtype=rmat.dtype, copy=False)[:3, :3]
     return R.from_matrix(M).as_euler("xyz")
+
+def fileter_masks_by_bounds(masks, points, bounds):
+    '''
+    Args:
+        masks: list of np.ndarray of [H, W], uint8, masks
+        points: np.ndarray, [N, 3], float32, points in world frame
+        bounds: np.ndarray, [2, 3], float32, bounds in world frame
+    '''
+    filtered_masks = []
+    for mask in masks:
+        bool_mask = (mask > 0)
+        mask_points = points[bool_mask]
+        center_point = mask_points.mean(axis=0) # (3)
+        if (center_point >= bounds[0]).all() and (center_point <= bounds[1]).all():
+            filtered_masks.append(mask)
+    return filtered_masks

@@ -12,6 +12,7 @@ import numpy as np
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from utils.sensor import RealSense
+from utils.utils import get_points
 from mask_tracker import MaskTrackerProcess
 
 def main():
@@ -39,7 +40,17 @@ def main():
         data = None
         while data is None:
             data = rs.get()
-        tracker_process.send(data['color'])
+        bgr = data['color']
+        rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+        depth = data['depth']
+        extrinsics = data['extrinsics']
+        instrinsics = rs.get_instrinsics()
+        points = get_points(depth, instrinsics, extrinsics)
+        send_data = {
+            "rgb": rgb,
+            "points": points,
+        }
+        tracker_process.send(send_data)
         mask = tracker_process.get()
 
         # exlude the background 0
