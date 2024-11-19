@@ -38,7 +38,6 @@ class RealEnviroment:
         # self._interpolate_rot_step_size = self._config['enviroment']['interpolate_rot_step_size']
         self.step_counter = 0
 
-        self._arm = airbot.create_agent(end_mode="gripper")
         self._w2a = np.array(config['enviroment']['w2a'])
         R = self._w2a[:3, :3]
         T = self._w2a[:3, 3]
@@ -48,6 +47,7 @@ class RealEnviroment:
         self._a2w[:3, :3] = R_inv
         self._a2w[:3, 3] = T_inv
 
+        self._arm = None
         self._rs = None
         self._mask_tracker = None
         self._keypoint_tracker = None
@@ -60,11 +60,11 @@ class RealEnviroment:
         # ==============================
         # = Initialize the arm
         # ==============================
-        # arm
         # arm_setted = os.system("airbot_auto_set_zero")
         # if arm_setted != 0:
         #     raise Exception("Failed to set zero for the robot arm")
-        
+        self._arm = airbot.create_agent(end_mode="gripper")
+
         # ==============================
         # = Initialize RealSense
         # ==============================
@@ -94,7 +94,9 @@ class RealEnviroment:
         self._keypoint_tracker = KeypointTrackerProcess(self._config['keypoint_tracker'])
         self._keypoint_tracker.start()
         self._keypoint_tracker.send({"rgb": rgb, "points": points, "masks": masks})
-        self._keypoint_tracker.get()
+        
+
+        self.register_keypoints()
 
         print(GREEN + "[RealEnviroment]: RealEnviroment initialized" + RESET)
 
@@ -173,8 +175,30 @@ class RealEnviroment:
         masks = self._mask_tracker.get()
         self._keypoint_tracker.send({"rgb": rgb, "points": points, "masks": masks})
         res = self._keypoint_tracker.get()
-        self._key2obj = res['obj_ids']
-        self._num_objects = len(self._key2obj)
+        keypoints = res['keypoints']
+        projected = res['projected']
+        obj_ids = res['obj_ids']
+        # add ee keypoint
+        ee_pos = self.get_ee_pos()
+        ee_keypoint = np.array([ee_pos[0], ee_pos[1], ee_pos[2]]).reshape(1, 3)
+        keypoints = np.concatenate([ee_keypoint, keypoints], axis=0)
+        self._key2obj = np.concatenate([[0], obj_ids], axis=0)
+        print(GREEN + "[RealEnviroment]: Keypoints registered" + RESET)
+        print(GREEN + f"[RealEnviroment]: {len(keypoints)} keypoints registered" + RESET)
+        print(GREEN + f"[RealEnviroment]: Keypoints to object relation:" + RESET)
+        print(GREEN + f"{self._key2obj}" + RESET)
+        img = self._keypoint_tracker.get()['projected']
+        objs = np.unique(masks)
+        objs = objs[objs != 0]
+        for i in objs:
+            # highlight the object
+            mask_obj = (masks == i)
+            color_mask = np.zeros_like(projected)
+            color_mask[mask_obj] = np.array([0, 0, 255])
+            projected = cv2.addWeighted(projected, 1, color_mask, 0.5, 0)
+        cv2.imshow("keypoints", projected)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
         
 
     def get_keypoints(self):
@@ -204,8 +228,8 @@ class RealEnviroment:
         projected = res['projected']
         # add ee keypoint
         ee_pos = self.get_ee_pos()
-        ee_keypoint = np.array([ee_pos[0], ee_pos[1], ee_pos[2]])
-        keypoints = np.concatenate([keypoints, [ee_keypoint]], axis=0)
+        ee_keypoint = np.array([ee_pos[0], ee_pos[1], ee_pos[2]]).reshape(1, 3)
+        keypoints = np.concatenate([ee_keypoint, keypoints], axis=0)
         # get pixel coordinates of ee keypoint
         c2w = extrinsics
         w2c = np.eye(4)
@@ -289,7 +313,7 @@ class RealEnviroment:
         Returns:
             bool: True if the robot is grasping the object, otherwise False.
         '''
-        if (0.00 <= self._arm.get_current_end()):
+        if (0.00 <= self._arm.get_current_end() and self._arm.get_current_end() <= 0.5):
             data = None
             while data is None:
                 data = self._rs.get()
@@ -317,9 +341,11 @@ class RealEnviroment:
             v = int(fy * y / z + cy)
             ee_pixels = (v, u)
             if mask[ee_pixels] == candidate_obj:
-                return True
+                return 1
+            else:
+                return 0
         else:
-            return False
+            return 0
     
     def get_ee_pose(self):
         '''
@@ -465,7 +491,8 @@ class RealEnviroment:
         reachable = self._arm.set_target_pose(pos, quat, vel = 0.05)
         if not reachable:
             return False
-        self._arm.set_target_end(end)
+        if end >= -0.01:
+            self._arm.set_target_end(end)
         if wait:
             while True:
                 if (np.abs(pos - self._arm.get_current_translation()) < 0.01).all():

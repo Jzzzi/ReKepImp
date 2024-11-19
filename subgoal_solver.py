@@ -8,7 +8,7 @@ from scipy.optimize import dual_annealing, minimize
 from scipy.interpolate import RegularGridInterpolator
 
 sys.path.append(os.path.dirname(__file__))
-from utils.utils import unnormalize_vars, normalize_vars, pose2mat, euler2quat, consistency, transform_keypoints, farthest_point_sampling, quat2euler
+from utils.utils import unnormalize_vars, normalize_vars, pose2mat, euler2quat, consistency, transform_keypoints, farthest_point_sampling, quat2euler, get_callable_grasping_cost_fn
 # import transform_utils as T
 # from utils import (
 #     transform_keypoints,
@@ -93,7 +93,7 @@ def objective(opt_vars,
         transformed_keypoints = transform_keypoints(opt_pose_homo, keypoints_centered, keypoint_movable_mask)
         subgoal_violation = []
         for constraint in goal_constraints:
-            violation = constraint(transformed_keypoints[0], transformed_keypoints[1:])
+            violation = constraint(transformed_keypoints[0], transformed_keypoints)
             subgoal_violation.append(violation)
             subgoal_constraint_cost += np.clip(violation, 0, np.inf)
         subgoal_constraint_cost = 200.0*subgoal_constraint_cost
@@ -108,7 +108,7 @@ def objective(opt_vars,
         transformed_keypoints = transform_keypoints(opt_pose_homo, keypoints_centered, keypoint_movable_mask)
         path_violation = []
         for constraint in path_constraints:
-            violation = constraint(transformed_keypoints[0], transformed_keypoints[1:])
+            violation = constraint(transformed_keypoints[0], transformed_keypoints)
             path_violation.append(violation)
             path_constraint_cost += np.clip(violation, 0, np.inf)
         path_constraint_cost = 200.0*path_constraint_cost

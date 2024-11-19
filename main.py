@@ -1,7 +1,7 @@
 import os
 import sys
 import json
-
+import time
 import torch
 import numpy as np
 import cv2
@@ -41,7 +41,6 @@ class Main:
 
     def perform_task(self, instruction, rekep_program_dir=None, disturbance_seq=None):
         self._env.reset()
-        cam_obs = self._env.get_cam_obs()
         # seems to be no such key in the config
         # rgb = cam_obs[self.config['vlm_camera']]['rgb']
         # points = cam_obs[self.config['vlm_camera']]['points']
@@ -49,36 +48,34 @@ class Main:
         # ====================================
         # = keypoint proposal and constraint generation
         # ====================================
-        if rekep_program_dir is None:
-            keypoints, projected_img = self._env.get_keypoints()
+        try:
+            if rekep_program_dir is None:
+                keypoints, projected_img = self._env.get_keypoints()
+                #     self.visualizer.show_img(projected_img)
+                metadata = {'init_keypoint_positions': keypoints, 'num_keypoints': len(keypoints)}
+                rekep_program_dir = self._constraint_generator.generate(projected_img, instruction, metadata)
+                print(GREEN + f"[Main]: Constraints generated in {rekep_program_dir}" + RESET)
+            # ====================================
+            # = execute
+            # ====================================
+            self._execute(rekep_program_dir, disturbance_seq)
+        except:
+            self._env.stop()
+        self._env.stop()
 
-            if self._visualize:
-                cv2.imshow('keypoints', projected_img)
-                cv2.waitKey(0)
-                cv2.destroyAllWindows()
-            #     self.visualizer.show_img(projected_img)
-            metadata = {'init_keypoint_positions': keypoints, 'num_keypoints': len(keypoints)}
-            rekep_program_dir = self._constraint_generator.generate(projected_img, instruction, metadata)
-            print(GREEN + f"[Main]: Constraints generated in {rekep_program_dir}" + RESET)
-        # ====================================
-        # = execute
-        # ====================================
-        self._execute(rekep_program_dir, disturbance_seq)
-
-    def _update_disturbance_seq(self, stage, disturbance_seq):
-        if disturbance_seq is not None:
-            if stage in disturbance_seq and not self._applied_disturbance[stage]:
-                # set the disturbance sequence, the generator will yield and instantiate one disturbance function for each env.step until it is exhausted
-                self.env.disturbance_seq = disturbance_seq[stage](self.env)
-                self._applied_disturbance[stage] = True
+    # def _update_disturbance_seq(self, stage, disturbance_seq):
+    #     if disturbance_seq is not None:
+    #         if stage in disturbance_seq and not self._applied_disturbance[stage]:
+    #             # set the disturbance sequence, the generator will yield and instantiate one disturbance function for each env.step until it is exhausted
+    #             self.env.disturbance_seq = disturbance_seq[stage](self.env)
+    #             self._applied_disturbance[stage] = True
 
     def _execute(self, rekep_program_dir, disturbance_seq=None):
         # load metadata
         with open(os.path.join(rekep_program_dir, 'metadata.json'), 'r') as f:
             self._program_info = json.load(f)
-        self._applied_disturbance = {stage: False for stage in range(1, self._program_info['num_stages'] + 1)}
+        # self._applied_disturbance = {stage: False for stage in range(1, self._program_info['num_stages'] + 1)}
         # register keypoints to be tracked
-        self._env.register_keypoints()
         # load constraints
         self._constraint_fns = dict()
         for stage in range(1, self._program_info['num_stages'] + 1):  # stage starts with 1
@@ -90,18 +87,19 @@ class Main:
             self._constraint_fns[stage] = stage_dict
         
         # bookkeeping of which keypoints can be moved in the optimization
-        self._keypoint_movable_mask = np.zeros(self._program_info['num_keypoints'] + 1, dtype=bool)
+        self._keypoint_movable_mask = np.zeros(self._program_info['num_keypoints'], dtype=bool)
         self._keypoint_movable_mask[0] = True  # first keypoint is always the ee, so it's movable
 
         # main loop
         self._last_sim_step_counter = -np.inf
         self._update_stage(1)
         while True:
-            self._keypoints = self._env.get_keypoints()  # first keypoint is always the ee
+            self._keypoints, _ = self._env.get_keypoints()  # first keypoint is always the ee
             self._curr_ee_pose = self._env.get_ee_pose()
             self._curr_joint_pos = self._env.get_arm_joint_postions()
             self._sdf_voxels = self._env.get_sdf_voxels(self._main_config['sdf_voxel_size'])
             self._collision_points = self._env.get_collision_points()
+            print(GREEN + f"[Main]: stage {self._stage}" + RESET)
             # ====================================
             # = decide whether to backtrack
             # ====================================
@@ -137,10 +135,12 @@ class Main:
                 # ====================================
                 # = get optimized plan
                 # ====================================
-                if self._last_sim_step_counter == self._env.step_counter:
-                    print(YELLOW + f"[Main]: sim did not step forward within last iteration (HINT: adjust action_steps_per_iter to be larger or the pos_threshold to be smaller" + RESET)
+                # if self._last_sim_step_counter == self._env.step_counter:
+                #     print(YELLOW + f"[Main]: sim did not step forward within last iteration (HINT: adjust action_steps_per_iter to be larger or the pos_threshold to be smaller" + RESET)
                 next_subgoal = self._get_next_subgoal(from_scratch=self._first_iter)
+                # print(GREEN + f"[Main]: Get next subgoal." + RESET)
                 next_path = self._get_next_path(next_subgoal, from_scratch=self._first_iter)
+                # print(GREEN + f"[Main]: Get next path." + RESET)
                 self._first_iter = False
                 self._action_queue = next_path.tolist()
                 self._last_sim_step_counter = self._env.step_counter
@@ -168,6 +168,7 @@ class Main:
                         print(YELLOW + "[Main]: Task completed, but Video saver not implemented" + RESET)
                         return
                     # progress to next stage
+                    print(YELLOW + f"[Main]: progress to stage {self._stage + 1}" + RESET)
                     self._update_stage(self._stage + 1)
 
     def _get_next_subgoal(self, from_scratch):
@@ -186,7 +187,7 @@ class Main:
         subgoal_pose_homo = convert_pose_quat2mat(subgoal_pose)
         # if grasp stage, back up a bit to leave room for grasping
         if self._is_grasp_stage:
-            subgoal_pose[:3] += subgoal_pose_homo[:3, :3] @ np.array([-self.config['grasp_depth'] / 2.0, 0, 0])
+            subgoal_pose[:3] += subgoal_pose_homo[:3, :3] @ np.array([-self._main_config['grasp_depth'] / 2.0, 0, 0])
         debug_dict['stage'] = self._stage
         print_opt_debug_dict(debug_dict)
         # if self._visualize:
@@ -249,9 +250,10 @@ class Main:
     def _execute_grasp_action(self):
         pregrasp_pose = self._env.get_ee_pose()
         grasp_pose = pregrasp_pose.copy()
-        grasp_pose[:3] += quat2mat(pregrasp_pose[3:]) @ np.array([self.config['grasp_depth'], 0, 0])
+        grasp_pose[:3] += quat2mat(pregrasp_pose[3:]) @ np.array([self._main_config['grasp_depth'], 0, 0])
         grasp_action = np.concatenate([grasp_pose, [self._env.get_gripper_close_action()]])
         self._env.execute_action(grasp_action, precise=True)
+        time.sleep(0.5)
     
     def _execute_release_action(self):
         self._env.open_gripper()
@@ -261,10 +263,10 @@ if __name__ == "__main__":
     use_cached_query = False
 
     task = {
-            'instruction': 'over lap the red cup on the green cup',
-            'rekep_program_dir': 'rekep_programs/2021-08-10_19-36-44',
+            'instruction': 'pick and raise up the box',
+            'rekep_program_dir': '/home/liujk/ReKepImp/vlm_query/2024-11-19_19-41-04_over_lap_the_red_cup_on_the_green_cup',
     }
     instruction = task['instruction']
     main = Main(visualize=False)
     main.perform_task(instruction,
-                    rekep_program_dir=task['rekep_program_dir'] if use_cached_query else None)
+                    rekep_program_dir=task['rekep_program_dir'] if use_cached_query else None,)

@@ -7,7 +7,7 @@ import numpy as np
 from scipy.optimize import dual_annealing, minimize
 from scipy.interpolate import RegularGridInterpolator
 sys.path.append(os.path.dirname(__file__))
-from utils.utils import unnormalize_vars, normalize_vars, convert_pose_euler2mat, convert_pose_mat2quat, get_samples_jitted, convert_pose_quat2mat, path_length, transform_keypoints, pose2mat, euler2quat, farthest_point_sampling, get_linear_interpolation_steps, linear_interpolate_poses, convert_pose_euler2quat, quat2euler
+from utils.utils import unnormalize_vars, normalize_vars, convert_pose_euler2mat, convert_pose_mat2quat, get_samples_jitted, convert_pose_quat2mat, path_length, transform_keypoints, pose2mat, euler2quat, farthest_point_sampling, get_linear_interpolation_steps, linear_interpolate_poses, convert_pose_euler2quat, quat2euler, get_callable_grasping_cost_fn
 # ====================================
 # = objective function
 # ====================================
@@ -90,7 +90,7 @@ def objective(opt_vars,
         for pose in poses_homo[start_idx:end_idx]:
             transformed_keypoints = transform_keypoints(pose, keypoints_centered, keypoint_movable_mask)
             for constraint in path_constraints:
-                violation = constraint(transformed_keypoints[0], transformed_keypoints[1:])
+                violation = constraint(transformed_keypoints[0], transformed_keypoints)
                 path_violation.append(violation)
                 path_constraint_cost += np.clip(violation, 0, np.inf)
         path_constraint_cost = 200.0*path_constraint_cost

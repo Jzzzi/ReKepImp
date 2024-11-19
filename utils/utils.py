@@ -553,7 +553,10 @@ def fileter_masks_by_bounds(masks, points, bounds):
 def get_callable_grasping_cost_fn(env):
     def get_grasping_cost(keypoint_idx):
         keypoint_object = env.get_object_by_keypoint(keypoint_idx)
-        return -env.is_grasping(candidate_obj=keypoint_object) + 1  # return 0 if grasping an object, 1 if not grasping any object
+        # print(keypoint_idx)
+        grasped = env.is_grasping(candidate_obj=keypoint_object)
+        # print(grasped)
+        return -grasped + 1 # return 0 if grasping an object, 1 if not grasping any object
     return get_grasping_cost
 
 def merge_dicts(dicts):
@@ -626,6 +629,7 @@ def sample_from_spline(spline, num_samples):
         tck, u = spline
         samples = interpolate.splev(np.linspace(0, 1, num_samples), tck)  # [spline_dim, num_samples]
         samples = np.array(samples).T  # [num_samples, spline_dim]
+    return samples
 
 def spline_interpolate_poses(control_points, num_steps):
     """
@@ -641,6 +645,8 @@ def spline_interpolate_poses(control_points, num_steps):
         poses: [num_steps, 6] position + euler or [num_steps, 4, 4] pose or [num_steps, 7] position + quat
     """
     assert num_steps >= 2, 'num_steps must be at least 2'
+    if num_steps <= control_points.shape[0]:
+        return control_points
     if isinstance(control_points, list):
         control_points = np.array(control_points)
     if control_points.shape[1] == 6:
@@ -695,3 +701,22 @@ def spline_interpolate_poses(control_points, num_steps):
             pose = np.concatenate([pos_samples[i], quat])
             poses[i] = pose
     return poses
+    
+def merge_masks(masks, ratio):
+    '''
+    merge masks with a max overlap ratio
+    Args:
+        masks: a list of np.ndarray of shape [H, W], masks
+        ratio: float, max overlap ratio
+    '''
+    for i in range(len(masks)):
+        for j in range(i+1, len(masks)):
+            mask_i = masks[i]
+            mask_j = masks[j]
+            overlap = np.logical_and(mask_i, mask_j).sum() / np.logical_or(mask_i, mask_j).sum()
+            if overlap > ratio:
+                # move mask j
+                masks[j] = np.zeros_like(mask_j)
+    # delete empty masks
+    masks = [mask for mask in masks if mask.sum() > 0]
+    return masks

@@ -9,7 +9,7 @@ import cv2
 from cutie.inference.inference_core import InferenceCore
 from cutie.utils.get_default_model import get_default_model
 sys.path.append(os.path.dirname(__file__))
-from utils.utils import fileter_masks_by_bounds
+from utils.utils import fileter_masks_by_bounds, merge_masks
 
 RESET = "\033[0m"
 RED = "\033[31m"
@@ -32,6 +32,7 @@ class MaskTrackerProcess():
         self._num_objects = config['num_objects']
         self._path = config['path']
         self._device = config['device']
+        self._config = config
 
         # SAM parameters
         self._max_mask_ratio = config['max_mask_ratio']
@@ -43,6 +44,7 @@ class MaskTrackerProcess():
         bounds_min = np.array(config['bounds_min']).reshape(-1, 3)
         bounds_max = np.array(config['bounds_max']).reshape(-1, 3)
         self._bounds = np.concatenate([bounds_min, bounds_max], axis=0) # (2, 3)
+        self._max_overlap_ratio = config['max_overlap_ratio']
 
         self._process = None
         self._segmented = False
@@ -82,6 +84,9 @@ class MaskTrackerProcess():
         return self.__sam_done_event.is_set()
     
     def _run(self):
+        np.random.seed(self._config['seed'])
+        torch.manual_seed(self._config['seed'])
+        torch.cuda.manual_seed(self._config['seed'])
         while not self._stop_event.is_set():
             try:
                 data = self._data_queue.get(timeout=1)
@@ -97,9 +102,16 @@ class MaskTrackerProcess():
 
                 masks = [m['segmentation'] for m in masks]
                 print(GREEN + f"[MaskTracker]: {len(masks)} masks generated." + RESET)
+                length = len(masks)
                 masks = [m for m in masks if m.sum()/(m.shape[0]*m.shape[1]) < self._max_mask_ratio]
                 masks = [m for m in masks if m.sum()/(m.shape[0]*m.shape[1]) > self._min_mask_ratio]
+                print(GREEN + f"[MaskTracker]: {length-len(masks)} masks filtered by ratio." + RESET)
+                length = len(masks)
                 masks = fileter_masks_by_bounds(masks, points, self._bounds)
+                print(GREEN + f"[MaskTracker]: {length-len(masks)} masks filtered by bounds." + RESET)
+                length = len(masks)
+                masks = merge_masks(masks, self._max_overlap_ratio)
+                print(GREEN + f"[MaskTracker]: {length-len(masks)} masks merged." + RESET)
                 print(GREEN + f"[MaskTracker]: {len(masks)} masks selected." + RESET)
                 self._num_objects = min(len(masks), self._num_objects)
                 # DEBUG

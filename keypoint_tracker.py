@@ -28,9 +28,6 @@ class KeypointTrackerProcess():
         self._patch_size = 14  # dinov2
         self._keypoint_features = None
         self.track_type = "last_frame"
-        np.random.seed(self._config['seed'])
-        torch.manual_seed(self._config['seed'])
-        torch.cuda.manual_seed(self._config['seed'])
 
         # multiprocessing
         self._data_queue = mp.Queue()
@@ -74,6 +71,9 @@ class KeypointTrackerProcess():
         return self._result_queue.get()
     
     def _run(self):
+        np.random.seed(self._config['seed'])
+        torch.manual_seed(self._config['seed'])
+        torch.cuda.manual_seed(self._config['seed'])
         print(GREEN + f"[KeypointTracker]: Loading DINO model" + RESET)
         self._dinov2 = torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14').eval().to(self._device)
         print(GREEN + f"[KeypointTracker]: DINO model loaded" + RESET)
@@ -187,7 +187,7 @@ class KeypointTrackerProcess():
     def _cluster_features(self, points, features_flat, masks):
         candidate_keypoints = []
         candidate_pixels = []
-        candidate_rigid_group_ids = []
+        candidate_rigid_group_ids = [] # counts from 1
         # exclude the background 0
         objects = np.unique(masks)
         objects = objects[objects != 0]
