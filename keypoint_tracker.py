@@ -68,7 +68,7 @@ class KeypointTrackerProcess():
         {
             'keypoints': np.ndarray, [N, 3]
             'projected': np.ndarray, [H, W, 3]
-            'obj_ids': np.ndarray, [N]
+            'obj_ids': np.ndarray, [N], count from 1
         }
         '''
         return self._result_queue.get()
@@ -81,7 +81,7 @@ class KeypointTrackerProcess():
             try:
                 data = self._data_queue.get(timeout=1)
             except:
-                print(YELLOW + f"[KeypointTracker]: No data received." + RESET)
+                # print(YELLOW + f"[KeypointTracker]: No data received." + RESET)
                 continue
             # print(GREEN + f"[KeypointTracker]: Received data" + RESET)
             rgb, points, masks = data["rgb"], data["points"], data["masks"]
@@ -151,7 +151,7 @@ class KeypointTrackerProcess():
         for keypoint_count, pixel in enumerate(candidate_pixels):
             if pixel is None:
                 continue
-            displayed_text = f"{keypoint_count}"
+            displayed_text = f"{keypoint_count+1}" # start from 1, 0 is ee
             text_length = len(displayed_text)
             # draw a box
             box_width = 30 + 10 * (text_length - 1)
@@ -161,7 +161,7 @@ class KeypointTrackerProcess():
             # draw text
             org = (pixel[1] - 7 * (text_length), pixel[0] + 7)
             color = (255, 0, 0)
-            cv2.putText(projected, str(keypoint_count), org, cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+            cv2.putText(projected, displayed_text, org, cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
         return projected
 
     @torch.inference_mode()

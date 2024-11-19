@@ -8,8 +8,15 @@ import torch
 import cv2
 from scipy.spatial.transform import Rotation as R
 from scipy.spatial.transform import Slerp
+from scipy.spatial.transform import RotationSpline
+import scipy.interpolate as interpolate
 import open3d as o3d
 from numba import njit
+
+RESET = "\033[0m"
+RED = "\033[31m"
+GREEN = "\033[32m"
+YELLOW = "\033[33m"
 
 def get_cam_points(depth:np.ndarray, instrinsics:np.ndarray)->np.ndarray:
     '''
@@ -542,3 +549,149 @@ def fileter_masks_by_bounds(masks, points, bounds):
         if (center_point >= bounds[0]).all() and (center_point <= bounds[1]).all():
             filtered_masks.append(mask)
     return filtered_masks
+
+def get_callable_grasping_cost_fn(env):
+    def get_grasping_cost(keypoint_idx):
+        keypoint_object = env.get_object_by_keypoint(keypoint_idx)
+        return -env.is_grasping(candidate_obj=keypoint_object) + 1  # return 0 if grasping an object, 1 if not grasping any object
+    return get_grasping_cost
+
+def merge_dicts(dicts):
+    return {
+        k : v 
+        for d in dicts
+        for k, v in d.items()
+    }
+
+def exec_safe(code_str, gvars=None, lvars=None):
+    banned_phrases = ['import', '__']
+    for phrase in banned_phrases:
+        assert phrase not in code_str
+  
+    if gvars is None:
+        gvars = {}
+    if lvars is None:
+        lvars = {}
+    empty_fn = lambda *args, **kwargs: None
+    custom_gvars = merge_dicts([
+        gvars,
+        {'exec': empty_fn, 'eval': empty_fn}
+    ])
+    try:
+        exec(code_str, custom_gvars, lvars)
+    except Exception as e:
+        print(f'Error executing code:\n{code_str}')
+        raise e
+
+def load_functions_from_txt(txt_path, get_grasping_cost_fn):
+    if txt_path is None:
+        return []
+    # load txt file
+    with open(txt_path, 'r') as f:
+        functions_text = f.read()
+    # execute functions
+    gvars_dict = {
+        'np': np,
+        'get_grasping_cost_by_keypoint_idx': get_grasping_cost_fn,
+    }  # external library APIs
+    lvars_dict = dict()
+    exec_safe(functions_text, gvars=gvars_dict, lvars=lvars_dict)
+    return list(lvars_dict.values())
+
+def print_opt_debug_dict(debug_dict):
+    print('\n' + '#' * 40)
+    print(f'# Optimization debug info:')
+    max_key_length = max(len(str(k)) for k in debug_dict.keys())
+    for k, v in debug_dict.items():
+        if isinstance(v, int) or isinstance(v, float):
+            print(f'# {k:<{max_key_length}}: {v:.05f}')
+        elif isinstance(v, list) and all(isinstance(x, int) or isinstance(x, float) for x in v):
+            print(f'# {k:<{max_key_length}}: {np.array(v).round(5)}')
+        else:
+            print(f'# {k:<{max_key_length}}: {v}')
+    print('#' * 40 + '\n')
+
+def fit_b_spline(control_points):
+    # determine appropriate k
+    k = min(3, control_points.shape[0]-1)
+    spline = interpolate.splprep(control_points.T, s=0, k=k)
+    return spline
+
+def sample_from_spline(spline, num_samples):
+    sample_points = np.linspace(0, 1, num_samples)
+    if isinstance(spline, RotationSpline):
+        samples = spline(sample_points).as_matrix()  # [num_samples, 3, 3]
+    else:
+        assert isinstance(spline, tuple) and len(spline) == 2, 'spline must be a tuple of (tck, u)'
+        tck, u = spline
+        samples = interpolate.splev(np.linspace(0, 1, num_samples), tck)  # [spline_dim, num_samples]
+        samples = np.array(samples).T  # [num_samples, spline_dim]
+
+def spline_interpolate_poses(control_points, num_steps):
+    """
+    Interpolate between through the control points using spline interpolation.
+    1. Fit a b-spline through the positional terms of the control points.
+    2. Fit a RotationSpline through the rotational terms of the control points.
+    3. Sample the b-spline and RotationSpline at num_steps.
+
+    Args:
+        control_points: [N, 6] position + euler or [N, 4, 4] pose or [N, 7] position + quat
+        num_steps: number of poses to interpolate
+    Returns:
+        poses: [num_steps, 6] position + euler or [num_steps, 4, 4] pose or [num_steps, 7] position + quat
+    """
+    assert num_steps >= 2, 'num_steps must be at least 2'
+    if isinstance(control_points, list):
+        control_points = np.array(control_points)
+    if control_points.shape[1] == 6:
+        control_points_pos = control_points[:, :3]  # [N, 3]
+        control_points_euler = control_points[:, 3:]  # [N, 3]
+        control_points_rotmat = []
+        for control_point_euler in control_points_euler:
+            control_points_rotmat.append(euler2mat(control_point_euler))
+        control_points_rotmat = np.array(control_points_rotmat)  # [N, 3, 3]
+    elif control_points.shape[1] == 4 and control_points.shape[2] == 4:
+        control_points_pos = control_points[:, :3, 3]  # [N, 3]
+        control_points_rotmat = control_points[:, :3, :3]  # [N, 3, 3]
+    elif control_points.shape[1] == 7:
+        control_points_pos = control_points[:, :3]
+        control_points_rotmat = []
+        for control_point_quat in control_points[:, 3:]:
+            control_points_rotmat.append(quat2mat(control_point_quat))
+        control_points_rotmat = np.array(control_points_rotmat)
+    else:
+        raise ValueError('control_points not recognized')
+    # remove the duplicate points (threshold 1e-3)
+    diff = np.linalg.norm(np.diff(control_points_pos, axis=0), axis=1)
+    mask = diff > 1e-3
+    # always keep the first and last points
+    mask = np.concatenate([[True], mask[:-1], [True]])
+    control_points_pos = control_points_pos[mask]
+    control_points_rotmat = control_points_rotmat[mask]
+    # fit b-spline through positional terms control points
+    pos_spline = fit_b_spline(control_points_pos)
+    # fit RotationSpline through rotational terms control points
+    times = pos_spline[1]
+    rotations = R.from_matrix(control_points_rotmat)
+    rot_spline = RotationSpline(times, rotations)
+    # sample from the splines
+    pos_samples = sample_from_spline(pos_spline, num_steps)  # [num_steps, 3]
+    rot_samples = sample_from_spline(rot_spline, num_steps)  # [num_steps, 3, 3]
+    if control_points.shape[1] == 6:
+        poses = []
+        for i in range(num_steps):
+            pose = np.concatenate([pos_samples[i], mat2euler(rot_samples[i])])
+            poses.append(pose)
+        poses = np.array(poses)
+    elif control_points.shape[1] == 4 and control_points.shape[2] == 4:
+        poses = np.empty((num_steps, 4, 4))
+        poses[:, :3, :3] = rot_samples
+        poses[:, :3, 3] = pos_samples
+        poses[:, 3, 3] = 1
+    elif control_points.shape[1] == 7:
+        poses = np.empty((num_steps, 7))
+        for i in range(num_steps):
+            quat = mat2quat(rot_samples[i])
+            pose = np.concatenate([pos_samples[i], quat])
+            poses[i] = pose
+    return poses

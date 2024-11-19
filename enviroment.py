@@ -36,19 +36,8 @@ class RealEnviroment:
         # Not needed
         # self._interpolate_pos_step_size = self._config['enviroment']['interpolate_pos_step_size']
         # self._interpolate_rot_step_size = self._config['enviroment']['interpolate_rot_step_size']
-        # self._step_counter = 0
+        self.step_counter = 0
 
-        self._rs = None
-        self._mask_tracker = None
-        self._keypoint_tracker = None
-
-        self._num_objects = None
-        self._key2obj = []
-
-        # arm
-        # arm_setted = os.system("airbot_auto_set_zero")
-        # if arm_setted != 0:
-        #     raise Exception("Failed to set zero for the robot arm")
         self._arm = airbot.create_agent(end_mode="gripper")
         self._w2a = np.array(config['enviroment']['w2a'])
         R = self._w2a[:3, :3]
@@ -59,11 +48,28 @@ class RealEnviroment:
         self._a2w[:3, :3] = R_inv
         self._a2w[:3, 3] = T_inv
 
+        self._rs = None
+        self._mask_tracker = None
+        self._keypoint_tracker = None
+
+        self._num_objects = None
+        self._key2obj = []
+
+
+    def start(self):
+        # ==============================
+        # = Initialize the arm
+        # ==============================
+        # arm
+        # arm_setted = os.system("airbot_auto_set_zero")
+        # if arm_setted != 0:
+        #     raise Exception("Failed to set zero for the robot arm")
+        
         # ==============================
         # = Initialize RealSense
         # ==============================
         mp.set_start_method('spawn')
-        self._rs = RealSense(config['realsense'])
+        self._rs = RealSense(self._config['realsense'])
         self._rs.start()
         time.sleep(2) # warm up
 
@@ -75,22 +81,23 @@ class RealEnviroment:
             data = self._rs.get()
         rgb = cv2.cvtColor(data['color'], cv2.COLOR_BGR2RGB)
         depth = data['depth']
-        instrinsics = config['realsense']['instrinsics']
+        instrinsics = self._rs.get_instrinsics()
         extrinsics = data['extrinsics']
         points = get_points(depth, instrinsics, extrinsics)
-        self._mask_tracker = MaskTrackerProcess(config['mask_tracker'])
+        self._mask_tracker = MaskTrackerProcess(self._config['mask_tracker'])
         self._mask_tracker.start()
         self._mask_tracker.send({
             'rgb': rgb,
             'points': points,
         })
         masks = self._mask_tracker.get()
-        self._keypoint_tracker = KeypointTrackerProcess(config['keypoint_tracker'])
+        self._keypoint_tracker = KeypointTrackerProcess(self._config['keypoint_tracker'])
         self._keypoint_tracker.start()
         self._keypoint_tracker.send({"rgb": rgb, "points": points, "masks": masks})
         self._keypoint_tracker.get()
 
         print(GREEN + "[RealEnviroment]: RealEnviroment initialized" + RESET)
+
     # ======================================
     # = exposed functions
     # ======================================
@@ -128,7 +135,7 @@ class RealEnviroment:
         rgb = cv2.cvtColor(data['color'], cv2.COLOR_BGR2RGB)
         depth = data['depth']
 
-        instrinsics = self._config['realsense']['instrinsics']
+        instrinsics = self._rs.get_instrinsics()
         extrinsics = data['extrinsics']
         points = get_points(depth, instrinsics, extrinsics)
 
@@ -156,7 +163,7 @@ class RealEnviroment:
             data = self._rs.get()
         rgb = cv2.cvtColor(data['color'], cv2.COLOR_BGR2RGB)
         depth = data['depth'].astype(np.float32)
-        instrinsics = self._config['realsense']['instrinsics']
+        instrinsics = self._rs.get_instrinsics()
         extrinsics = data['extrinsics']
         points = get_points(depth, instrinsics, extrinsics)
         self._mask_tracker.send({
@@ -170,20 +177,20 @@ class RealEnviroment:
         self._num_objects = len(self._key2obj)
         
 
-    def get_keypoint_positions(self):
+    def get_keypoints(self):
         '''
         Retrieves the current positions of registered keypoints in the world frame.
         
         Returns:
             np.ndarray: Array of keypoint positions, shape (N, 3).
-            np.ndaary: Array of projected keypoint positions, shape (N, 2).
+            np.ndaary: Keypoints projected to the camera image, shape (N, 2).
         '''
         data = None
         while data is None:
             data = self._rs.get()
         rgb = cv2.cvtColor(data['color'], cv2.COLOR_BGR2RGB)
         depth = data['depth'].astype(np.float32)
-        instrinsics = self._config['realsense']['instrinsics']
+        instrinsics = self._rs.get_instrinsics()
         extrinsics = data['extrinsics']
         points = get_points(depth, instrinsics, extrinsics)
         self._mask_tracker.send({
@@ -193,7 +200,44 @@ class RealEnviroment:
         masks = self._mask_tracker.get()
         self._keypoint_tracker.send({"rgb": rgb, "points": points, "masks": masks})
         res = self._keypoint_tracker.get()
-        return res['keypoints'], res['projected']    
+        keypoints = res['keypoints']
+        projected = res['projected']
+        # add ee keypoint
+        ee_pos = self.get_ee_pos()
+        ee_keypoint = np.array([ee_pos[0], ee_pos[1], ee_pos[2]])
+        keypoints = np.concatenate([keypoints, [ee_keypoint]], axis=0)
+        # get pixel coordinates of ee keypoint
+        c2w = extrinsics
+        w2c = np.eye(4)
+        w2c[:3, :3] = c2w[:3, :3].T
+        w2c[:3, 3] = -np.dot(c2w[:3, :3].T, c2w[:3, 3])
+        ee_pos_cam = np.dot(w2c[:3, :3], ee_pos) + w2c[:3, 3]
+        x, y, z = ee_pos_cam
+        instrinsics = instrinsics.reshape(-1)
+        fx, fy, cx, cy = instrinsics[0], instrinsics[4], instrinsics[2], instrinsics[5]
+        u = int(fx * x / z + cx)
+        v = int(fy * y / z + cy)
+        ee_pixels = (v, u)
+
+        # Draw EE keypoint on the image
+        def _draw_zero_on_image(image, pixel):
+            if pixel is not None:
+                displayed_text = "0"
+                text_length = len(displayed_text)
+                box_width = 30 + 10 * (text_length - 1)
+                box_height = 30
+                cv2.rectangle(image, (pixel[1] - box_width // 2, pixel[0] - box_height // 2),
+                            (pixel[1] + box_width // 2, pixel[0] + box_height // 2), (255, 255, 255), -1)
+                cv2.rectangle(image, (pixel[1] - box_width // 2, pixel[0] - box_height // 2),
+                            (pixel[1] + box_width // 2, pixel[0] + box_height // 2), (0, 0, 0), 2)
+                org = (pixel[1] - 7 * (text_length), pixel[0] + 7)
+                color = (255, 0, 0)
+                image = cv2.putText(image, displayed_text, org, cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+            return image
+
+        projected = _draw_zero_on_image(projected, ee_pixels)
+
+        return keypoints, projected
 
 
     def get_object_by_keypoint(self, keypoint_idx):
@@ -233,8 +277,7 @@ class RealEnviroment:
         Returns:
             None
         '''
-
-        pass
+        self.start()
 
     def is_grasping(self, candidate_obj=None):
         '''
@@ -246,7 +289,37 @@ class RealEnviroment:
         Returns:
             bool: True if the robot is grasping the object, otherwise False.
         '''
-        return (0.01 < self._arm.get_current_end() < 0.99)
+        if (0.00 <= self._arm.get_current_end()):
+            data = None
+            while data is None:
+                data = self._rs.get()
+            rgb = cv2.cvtColor(data['color'], cv2.COLOR_BGR2RGB)
+            depth = data['depth']
+            instrinsics = self._rs.get_instrinsics()
+            extrinsics = data['extrinsics']
+            points = get_points(depth, instrinsics, extrinsics)
+            self._mask_tracker.send({
+                'rgb': rgb,
+                'points': points,
+            })
+            mask = self._mask_tracker.get()
+            ee_pos = self.get_ee_pos()
+            # get pixel coordinates of ee keypoint
+            c2w = extrinsics
+            w2c = np.eye(4)
+            w2c[:3, :3] = c2w[:3, :3].T
+            w2c[:3, 3] = -np.dot(c2w[:3, :3].T, c2w[:3, 3])
+            ee_pos_cam = np.dot(w2c[:3, :3], ee_pos) + w2c[:3, 3]
+            x, y, z = ee_pos_cam
+            instrinsics = instrinsics.reshape(-1)
+            fx, fy, cx, cy = instrinsics[0], instrinsics[4], instrinsics[2], instrinsics[5]
+            u = int(fx * x / z + cx)
+            v = int(fy * y / z + cy)
+            ee_pixels = (v, u)
+            if mask[ee_pixels] == candidate_obj:
+                return True
+        else:
+            return False
     
     def get_ee_pose(self):
         '''
