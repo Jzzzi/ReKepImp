@@ -9,17 +9,7 @@ from scipy.interpolate import RegularGridInterpolator
 
 sys.path.append(os.path.dirname(__file__))
 from utils.utils import unnormalize_vars, normalize_vars, pose2mat, euler2quat, consistency, transform_keypoints, farthest_point_sampling, quat2euler, get_callable_grasping_cost_fn, GREEN, RESET
-# import transform_utils as T
-# from utils import (
-#     transform_keypoints,
-#     calculate_collision_cost,
-#     normalize_vars,
-#     unnormalize_vars,
-#     farthest_point_sampling,
-#     consistency,
-# )
-
-def objective(opt_vars,
+def _objective(opt_vars,
             bounds,
             keypoints_centered,
             keypoint_movable_mask,
@@ -265,7 +255,7 @@ class SubgoalSolver:
         # use global optimization for the first iteration
         if from_scratch:
             opt_result = dual_annealing(
-                func=objective,
+                func=_objective,
                 bounds=bounds,
                 args=aux_args,
                 maxfun=self._config['sampling_maxfun'],
@@ -279,7 +269,7 @@ class SubgoalSolver:
         # use gradient-based local optimization for the following iterations
         else:
             opt_result = minimize(
-                fun=objective,
+                fun=_objective,
                 x0=init_sol,
                 args=aux_args,
                 bounds=bounds,
@@ -295,7 +285,7 @@ class SubgoalSolver:
         if isinstance(opt_result.message, list):
             opt_result.message = opt_result.message[0]
         # rerun to get debug info
-        _, debug_dict = objective(opt_result.x, *aux_args, return_debug_dict=True)
+        _, debug_dict = _objective(opt_result.x, *aux_args, return_debug_dict=True)
         debug_dict['sol'] = opt_result.x
         debug_dict['msg'] = opt_result.message
         debug_dict['solve_time'] = solve_time

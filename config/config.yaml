@@ -27,7 +27,7 @@ mask_tracker:
   path: *path
   device: *device
   max_mask_ratio: 0.3
-  min_mask_ratio: 0.004
+  min_mask_ratio: 0.001
   # SAM params
   points_per_side: 64
   crop_n_layers: 1
@@ -35,6 +35,7 @@ mask_tracker:
   bounds_min: *bounds_min
   bounds_max: *bounds_max
   max_overlap_ratio: 0.5
+  max_queue_size: 3 # the number of frames to keep in the queue
 
 keypoint_tracker:
   num_candidates_per_mask: 3
@@ -44,6 +45,7 @@ keypoint_tracker:
   bounds_min: *bounds_min
   bounds_max: *bounds_max
   seed: *seed
+  max_queue_size: 3
 
 enviroment:
   bounds_min: *bounds_min

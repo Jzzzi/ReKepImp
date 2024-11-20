@@ -1,10 +1,12 @@
 import os
 import sys
 import time
+from typing import Union, Dict
+import multiprocessing as mp
+import threading
 
 import numpy as np
 import cv2
-import multiprocessing as mp
 
 import airbot
 sys.path.append(os.path.dirname(__file__))
@@ -29,245 +31,123 @@ class RealEnviroment:
             verbose (bool): If True, provides additional logging.
         '''
         self.video_cache = []
-        self._config = config
-        self.verbose = verbose
-        self.bounds_min = np.array(self._config['enviroment']['bounds_min'])
-        self.bounds_max = np.array(self._config['enviroment']['bounds_max'])
-        # Not needed
-        # self._interpolate_pos_step_size = self._config['enviroment']['interpolate_pos_step_size']
-        # self._interpolate_rot_step_size = self._config['enviroment']['interpolate_rot_step_size']
-        self.step_counter = 0
+        self._global_config = config # global config
+        self._bounds_min = np.array(self._global_config['enviroment']['bounds_min'])
+        self._bounds_max = np.array(self._global_config['enviroment']['bounds_max'])
+        self._step_counter = 0
 
+        # transformation matrices
         self._w2a = np.array(config['enviroment']['w2a'])
-        R = self._w2a[:3, :3]
-        T = self._w2a[:3, 3]
-        R_inv = R.T
-        T_inv = -np.dot(R_inv, T)
-        self._a2w = np.eye(4)
-        self._a2w[:3, :3] = R_inv
-        self._a2w[:3, 3] = T_inv
+        self._a2w = np.linalg.inv(self._w2a)
 
+        # agents
         self._arm = None
         self._rs = None
         self._mask_tracker = None
         self._keypoint_tracker = None
+        self._update_thread = None
+        self._stop_event = None
 
         self._num_objects = None
         self._key2obj = []
+        self._instrinsics = None
+        self._extrinsics = None
 
+    def _update(self, stop_event):
+        while not stop_event.is_set():
+            self.observe(update_only=True)
+            time.sleep(0.1)
+    # =====================================================================
+    # External API
+    # =====================================================================
 
     def start(self):
-        # ==============================
-        # = Initialize the arm
-        # ==============================
+        # Initialize the arm
         # arm_setted = os.system("airbot_auto_set_zero")
-        # if arm_setted != 0:
-        #     raise Exception("Failed to set zero for the robot arm")
+        # assert arm_setted == 0, "Failed to set zero for the arm"
         self._arm = airbot.create_agent(end_mode="gripper")
 
-        # ==============================
-        # = Initialize RealSense
-        # ==============================
+        # Initialize RealSense
         mp.set_start_method('spawn')
-        self._rs = RealSense(self._config['realsense'])
+        self._rs = RealSense(self._global_config['realsense'])
         self._rs.start()
         time.sleep(2) # warm up
 
-        # ==============================
-        # = Initialize mask tracker and keypoint tracker
-        # ==============================
+        # Initialize mask tracker and keypoint tracker
         data = None
         while data is None:
             data = self._rs.get()
         rgb = cv2.cvtColor(data['color'], cv2.COLOR_BGR2RGB)
         depth = data['depth']
-        instrinsics = self._rs.get_instrinsics()
+        instrinsics = data['instrinsics']
         extrinsics = data['extrinsics']
         points = get_points(depth, instrinsics, extrinsics)
-        self._mask_tracker = MaskTrackerProcess(self._config['mask_tracker'])
+        self._mask_tracker = MaskTrackerProcess(self._global_config['mask_tracker'])
         self._mask_tracker.start()
         self._mask_tracker.send({
             'rgb': rgb,
             'points': points,
         })
         masks = self._mask_tracker.get()
-        self._keypoint_tracker = KeypointTrackerProcess(self._config['keypoint_tracker'])
+        self._keypoint_tracker = KeypointTrackerProcess(self._global_config['keypoint_tracker'])
         self._keypoint_tracker.start()
         self._keypoint_tracker.send({"rgb": rgb, "points": points, "masks": masks})
-        
+        self._keypoint_tracker.get()
 
+        # save extrinsics, instrinsics
+        self._extrinsics = extrinsics
+        self._instrinsics = instrinsics
+        # register keypoints
         self.register_keypoints()
 
-        print(GREEN + "[RealEnviroment]: RealEnviroment initialized" + RESET)
-
-    # ======================================
-    # = exposed functions
-    # ======================================
-    def get_sdf_voxels(self, resolution, exclude_robot=True, exclude_obj_in_hand=True):
-        '''
-        Computes the signed distance field (SDF) voxels for the environment, with options to exclude certain objects.
-        
-        Parameters:
-            resolution (float): Resolution of the SDF grid.
-            exclude_robot (bool): If True, excludes robot from the SDF computation.
-            exclude_obj_in_hand (bool): If True, excludes objects held by the robot from the SDF computation.
-        
-        Returns:
-            np.ndarray: A 3D numpy array representing the SDF voxels. Positive values are outside the object, negative values are inside.
-        '''
-        cam_obs = self.get_cam_obs()
-        rgb = cam_obs['rgb']
-        depth = cam_obs['depth']
-        mask = cam_obs['mask']
-        # extract object points
-        instrinsics = self._rs.get_instrinsics()
-        extrinsics = self._cam_extrinsics
-        points = get_points(depth, instrinsics, extrinsics, mask).reshape(-1, 3)
-        bounds = np.concatenate([self.bounds_min, self.bounds_max], axis=0) # (2, 3)
-        sdf_voxels = compute_sdf_gpu(points, bounds, resolution) # (H, W, D)
-        return sdf_voxels
+        self._stop_event = threading.Event()
+        self._update_thread = threading.Thread(target=self._update, args=(self._stop_event,))
+        self._update_thread.start()
+        print(GREEN + "[RealEnviroment]: RealEnviroment started" + RESET)
     
-    def get_object_points(self):
+    def observe(self, update_only = False)->Union[Dict, None]:
         '''
+        Return observation while update the mask and keypoint tracker. If update_only is True, return None.
         Return:
-            object_points (list): list of np.ndarray, [N, 3], object points in world frame. CAUTION: the first object is the end-effector.            
-        '''
-        num_objects = self._num_objects
-        object_points = []
-        # the first object is the end-effector
-        object_points.append(self.get_collision_points())
-        cam_obs = self.get_cam_obs()
-        rgb = cam_obs['rgb']
-        depth = cam_obs['depth']
-        mask = cam_obs['mask']
-        # extract object points
-        instrinsics = self._rs.get_instrinsics()
-        extrinsics = self._cam_extrinsics
-        points = get_points(depth, instrinsics, extrinsics).reshape(-1, 3)
-        for i in range(1, num_objects + 1):
-            mask_obj = (mask == i)
-            object_points.append(points[mask_obj])
-        return object_points
-
-
-
-    def get_cam_obs(self):
-        '''
-        This method continuously attempts to retrieve data from the camera until successful.
-        It processes the RGB and depth data, converts the depth data to meters, computes 3D points,
-        and retrieves a mask from the mask tracker.
-            dict: A dictionary containing the following keys:
-            - 'rgb' (numpy.ndarray): The RGB image data.
-            - 'depth' (numpy.ndarray): The depth image data in meters.
-            - 'points' (numpy.ndarray): The 3D points computed from the depth data.
-            - 'mask' (numpy.ndarray): The mask data from the mask tracker.
+            obs (dict): observation dict
+            {
+                'rgb': np.ndarray, [H, W, 3], RGB image
+                'depth': np.ndarray, [H, W], depth image in meters
+                'keypoints': np.ndarray, [N, 3], keypoints in world frame
+                'mask': np.ndarray, [H, W], mask image
+                'projected': np.ndarray, [H, W, 3], projected image with keypoints
+                'key2obj': np.ndarray, [N], keypoint to object relation
+            }
         '''
         data = None
         while data is None:
             data = self._rs.get()
         rgb = cv2.cvtColor(data['color'], cv2.COLOR_BGR2RGB)
         depth = data['depth']
-
-        instrinsics = self._rs.get_instrinsics()
-        extrinsics = data['extrinsics']
-        self._cam_extrinsics = extrinsics
-        points = get_points(depth, instrinsics, extrinsics)
-
-        self._mask_tracker.send({
-            'rgb': rgb,
-            'points': points,
-        })
-        mask = self._mask_tracker.get()
-        return {
-            'rgb': rgb,
-            'depth': depth,
-            'points': points,
-            'mask': mask
-        }
-
-    def register_keypoints(self, keypoints = None): # keypoints para not needed
-        '''
-        Registers the keypoints in the environment.
-        
-        Returns:
-            None
-        '''
-        data = None
-        while data is None:
-            data = self._rs.get()
-        rgb = cv2.cvtColor(data['color'], cv2.COLOR_BGR2RGB)
-        depth = data['depth'].astype(np.float32)
-        instrinsics = self._rs.get_instrinsics()
+        instrinsics = data['instrinsics']
         extrinsics = data['extrinsics']
         points = get_points(depth, instrinsics, extrinsics)
         self._mask_tracker.send({
             "rgb": rgb,
             "points": points,
         })
-        masks = self._mask_tracker.get()
-        self._keypoint_tracker.send({"rgb": rgb, "points": points, "masks": masks})
+        mask = self._mask_tracker.get()
+        self._keypoint_tracker.send({"rgb": rgb, "points": points, "masks": mask})
         res = self._keypoint_tracker.get()
+        if update_only:
+            return None
         keypoints = res['keypoints']
         projected = res['projected']
         obj_ids = res['obj_ids']
-        # add ee keypoint
-        ee_pos = self.get_ee_pos()
-        ee_keypoint = np.array([ee_pos[0], ee_pos[1], ee_pos[2]]).reshape(1, 3)
-        keypoints = np.concatenate([ee_keypoint, keypoints], axis=0)
-        self._key2obj = np.concatenate([[0], obj_ids], axis=0)
-        print(GREEN + "[RealEnviroment]: Keypoints registered" + RESET)
-        print(GREEN + f"[RealEnviroment]: {len(keypoints)} keypoints registered" + RESET)
-        print(GREEN + f"[RealEnviroment]: Keypoints to object relation:" + RESET)
-        print(GREEN + f"{self._key2obj}" + RESET)
-        img = self._keypoint_tracker.get()['projected']
-        objs = np.unique(masks)
-        objs = objs[objs != 0]
-        for i in objs:
-            # highlight the object
-            mask_obj = (masks == i)
-            color_mask = np.zeros_like(projected)
-            color_mask[mask_obj] = np.array([0, 0, 255])
-            projected = cv2.addWeighted(projected, 1, color_mask, 0.5, 0)
-        self._num_objects = len(objs)
-        cv2.imshow("keypoints", projected)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
-        
 
-    def get_keypoints(self):
-        '''
-        Retrieves the current positions of registered keypoints in the world frame.
-        
-        Returns:
-            np.ndarray: Array of keypoint positions, shape (N, 3).
-            np.ndaary: Keypoints projected to the camera image, shape (N, 2).
-        '''
-        data = None
-        while data is None:
-            data = self._rs.get()
-        rgb = cv2.cvtColor(data['color'], cv2.COLOR_BGR2RGB)
-        depth = data['depth'].astype(np.float32)
-        instrinsics = self._rs.get_instrinsics()
-        extrinsics = data['extrinsics']
-        points = get_points(depth, instrinsics, extrinsics)
-        self._mask_tracker.send({
-            "rgb": rgb,
-            "points": points,
-        })
-        masks = self._mask_tracker.get()
-        self._keypoint_tracker.send({"rgb": rgb, "points": points, "masks": masks})
-        res = self._keypoint_tracker.get()
-        keypoints = res['keypoints']
-        projected = res['projected']
         # add ee keypoint
-        ee_pos = self.get_ee_pos()
+        ee_pos = self.get_ee_pos() # ee pos in world frame xyz
         ee_keypoint = np.array([ee_pos[0], ee_pos[1], ee_pos[2]]).reshape(1, 3)
         keypoints = np.concatenate([ee_keypoint, keypoints], axis=0)
+        obj_ids = np.concatenate([[0], obj_ids], axis=0)
         # get pixel coordinates of ee keypoint
         c2w = extrinsics
-        w2c = np.eye(4)
-        w2c[:3, :3] = c2w[:3, :3].T
-        w2c[:3, 3] = -np.dot(c2w[:3, :3].T, c2w[:3, 3])
+        w2c = np.linalg.inv(c2w)
         ee_pos_cam = np.dot(w2c[:3, :3], ee_pos) + w2c[:3, 3]
         x, y, z = ee_pos_cam
         instrinsics = instrinsics.reshape(-1)
@@ -276,9 +156,11 @@ class RealEnviroment:
         v = int(fy * y / z + cy)
         ee_pixels = (v, u)
 
-        # Draw EE keypoint on the image
-        def _draw_zero_on_image(image, pixel):
+        def _draw_zero_on_image(image, pixel):                
             if pixel is not None:
+                # make sure pixel is within the image
+                if pixel[0] < 0 or pixel[0] >= image.shape[0] or pixel[1] < 0 or pixel[1] >= image.shape[1]:
+                    return image
                 displayed_text = "0"
                 text_length = len(displayed_text)
                 box_width = 30 + 10 * (text_length - 1)
@@ -294,8 +176,43 @@ class RealEnviroment:
 
         projected = _draw_zero_on_image(projected, ee_pixels)
 
-        return keypoints, projected
+        return {
+            'rgb': rgb,
+            'depth': depth,
+            'mask': mask,
+            'keypoints': keypoints,
+            'projected': projected,
+            'key2obj': obj_ids
+        }
 
+    def register_keypoints(self): # keypoints para not needed
+        '''
+        Registers the keypoints in the environment.
+        
+        Returns:
+            None
+        '''
+        observation = self.observe()
+        projected = observation['projected']
+        masks = observation['mask']
+        keypoints = observation['keypoints']
+        self._key2obj = observation['key2obj']
+        print(GREEN + f"[RealEnviroment]: {len(keypoints)} keypoints registered" + RESET)
+        print(GREEN + f"[RealEnviroment]: Keypoints to object relation:" + RESET)
+        print(GREEN + f"{self._key2obj}" + RESET)
+
+        # show keypoints on the image
+        objs = np.unique(masks)
+        objs = objs[objs != 0]
+        for i in objs:
+            mask_obj = (masks == i)
+            color_mask = np.zeros_like(projected)
+            color_mask[mask_obj] = np.array([0, 0, 255])
+            projected = cv2.addWeighted(projected, 1, color_mask, 0.5, 0)
+        self._num_objects = len(objs)
+        cv2.imshow("keypoints", projected)
+        cv2.waitKey(0)
+        cv2.destroyWindow("keypoints")
 
     def get_object_by_keypoint(self, keypoint_idx):
         '''
@@ -336,7 +253,7 @@ class RealEnviroment:
         '''
         self.start()
 
-    def is_grasping(self, candidate_obj=None):
+    def is_grasping(self, candidate_obj = None):
         '''
         Checks if the robot’s gripper is currently grasping an object.
         
@@ -346,26 +263,14 @@ class RealEnviroment:
         Returns:
             bool: True if the robot is grasping the object, otherwise False.
         '''
+        observation = self.observe()
         if (0.00 <= self._arm.get_current_end() and self._arm.get_current_end() <= 0.5):
-            data = None
-            while data is None:
-                data = self._rs.get()
-            rgb = cv2.cvtColor(data['color'], cv2.COLOR_BGR2RGB)
-            depth = data['depth']
-            instrinsics = self._rs.get_instrinsics()
-            extrinsics = data['extrinsics']
-            points = get_points(depth, instrinsics, extrinsics)
-            self._mask_tracker.send({
-                'rgb': rgb,
-                'points': points,
-            })
-            mask = self._mask_tracker.get()
+            instrinsics = self._instrinsics
+            extrinsics = self._extrinsics
+            mask = observation['mask']
             ee_pos = self.get_ee_pos()
             # get pixel coordinates of ee keypoint
-            c2w = extrinsics
-            w2c = np.eye(4)
-            w2c[:3, :3] = c2w[:3, :3].T
-            w2c[:3, 3] = -np.dot(c2w[:3, :3].T, c2w[:3, 3])
+            w2c = np.linalg.inv(extrinsics)
             ee_pos_cam = np.dot(w2c[:3, :3], ee_pos) + w2c[:3, 3]
             x, y, z = ee_pos_cam
             instrinsics = instrinsics.reshape(-1)
@@ -412,7 +317,6 @@ class RealEnviroment:
             np.ndarray: Array [qx, qy, qz, qw] representing the orientation.
         '''
         return self.get_ee_pose()[3:]
-
 
     def get_arm_joint_postions(self):
         '''
@@ -488,7 +392,7 @@ class RealEnviroment:
         Computes the position and rotation difference between the end-effector’s current pose and a target pose.
         
         Parameters:
-            target_pose (np.ndarray): Target pose for the end-effector, shape (7,).
+            target_pose (np.ndarray): Target pose for the end-effector, shape (7,), translation and quaternion.
         
         Returns:
             tuple: (position difference, rotation difference).
@@ -546,6 +450,45 @@ class RealEnviroment:
         '''
         time.sleep(seconds)
 
+    def stop(self):
+        '''
+        Terminate all processes and threads.
+        '''
+        # stop the update thread
+        self._stop_event.set()
+        self._update_thread.join()
+        self._rs.stop()
+        self._mask_tracker.stop()
+        self._keypoint_tracker.stop()
+        print(GREEN + "[RealEnviroment]: RealEnviroment stopped" + RESET)
+
+    # ===========================
+    # Not used anymore
+    # ===========================
+    def get_sdf_voxels(self, resolution, exclude_robot=True, exclude_obj_in_hand=True):
+        '''
+        Computes the signed distance field (SDF) voxels for the environment, with options to exclude certain objects.
+        
+        Parameters:
+            resolution (float): Resolution of the SDF grid.
+            exclude_robot (bool): If True, excludes robot from the SDF computation.
+            exclude_obj_in_hand (bool): If True, excludes objects held by the robot from the SDF computation.
+        
+        Returns:
+            np.ndarray: A 3D numpy array representing the SDF voxels. Positive values are outside the object, negative values are inside.
+        '''
+        cam_obs = self.get_cam_obs()
+        rgb = cam_obs['rgb']
+        depth = cam_obs['depth']
+        mask = cam_obs['mask']
+        # extract object points
+        instrinsics = self._rs.get_instrinsics()
+        extrinsics = self._cam_extrinsics
+        points = get_points(depth, instrinsics, extrinsics, mask).reshape(-1, 3)
+        bounds = np.concatenate([self._bounds_min, self._bounds_max], axis=0) # (2, 3)
+        sdf_voxels = compute_sdf_gpu(points, bounds, resolution) # (H, W, D)
+        return sdf_voxels
+
     def save_video(self, save_path=None):
         '''
         Saves the cached video frames to an MP4 file at the specified path.
@@ -557,12 +500,3 @@ class RealEnviroment:
             str: The path where the video file is saved.
         '''
         print(YELLOW + "[RealEnviroment]: Fuck You!" + RESET)
-
-    def stop(self):
-        '''
-        Terminate all processes and threads.
-        '''
-        self._rs.stop()
-        self._mask_tracker.stop()
-        self._keypoint_tracker.stop()
-        print(GREEN + "[RealEnviroment]: RealEnviroment stopped" + RESET)

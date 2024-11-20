@@ -110,7 +110,8 @@ class RealSense():
                 "timestamp": timestamp,
                 "color": color_image,
                 "depth": depth_image,
-                "extrinsics": self._extrinsics
+                "extrinsics": self._extrinsics,
+                "instrinsics": self._instrinsics,
             })
 
             if self._queue.qsize() > self._max_queue_size:

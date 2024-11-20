@@ -143,7 +143,7 @@ class Main:
                 # print(GREEN + f"[Main]: Get next path." + RESET)
                 self._first_iter = False
                 self._action_queue = next_path.tolist()
-                self._last_sim_step_counter = self._env.step_counter
+                self._last_sim_step_counter = self._env._step_counter
 
                 # ====================================
                 # = execute

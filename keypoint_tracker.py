@@ -19,21 +19,31 @@ YELLOW = "\033[33m"
 
 class KeypointTrackerProcess():
     def __init__(self, config):
-        self._config = config
-        self._device = torch.device(self._config['device'])
-        self._dinov2 = None # Set in the new process
-        self._bounds_min = np.array(self._config['bounds_min'])
-        self._bounds_max = np.array(self._config['bounds_max'])
-        self._mean_shift = MeanShift(bandwidth=self._config['min_dist_bt_keypoints'], bin_seeding=True, n_jobs=32)
-        self._patch_size = 14  # dinov2
-        self._keypoint_features = None
-        self.track_type = "last_frame"
-
-        # multiprocessing
+        # process settings
         self._data_queue = mp.Queue()
         self._result_queue = mp.Queue()
         self._stop_event = mp.Event()
         self._process = None
+        self._max_queue_size = config['max_queue_size']
+
+        # random seed
+        np.random.seed(config['seed'])
+        torch.manual_seed(config['seed'])
+        torch.cuda.manual_seed(config['seed'])
+
+        # dino settings
+        self._device = torch.device(config['device'])
+        self._dinov2 = None # Set in the new process
+        self._mean_shift = MeanShift(bandwidth=config['min_dist_bt_keypoints'], bin_seeding=True, n_jobs=32)
+        self._patch_size = 14  # dinov2
+
+        # keypoint tracker settings
+        self._track_type = "last_frame"
+        self._bounds_min = np.array(config['bounds_min'])
+        self._bounds_max = np.array(config['bounds_max'])
+        self._num_candidates_per_mask = config['num_candidates_per_mask']
+        self._keypoint_features = None
+        self._candidate_rigid_group_ids = None
 
     def start(self):
         self._process = mp.Process(target=self._run)
@@ -46,6 +56,7 @@ class KeypointTrackerProcess():
         self._result_queue.close()
         self._stop_event.set()
         self._process.terminate()
+        self._process.join()
         print(GREEN+"[KeypointTracker]: Keypoint tracker process stopped"+RESET)
 
     def send(self, data):
@@ -71,9 +82,6 @@ class KeypointTrackerProcess():
         return self._result_queue.get()
     
     def _run(self):
-        np.random.seed(self._config['seed'])
-        torch.manual_seed(self._config['seed'])
-        torch.cuda.manual_seed(self._config['seed'])
         print(GREEN + f"[KeypointTracker]: Loading DINO model" + RESET)
         self._dinov2 = torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14').eval().to(self._device)
         print(GREEN + f"[KeypointTracker]: DINO model loaded" + RESET)
@@ -92,6 +100,8 @@ class KeypointTrackerProcess():
                 'obj_ids': self._candidate_rigid_group_ids
             }
             self._result_queue.put(result)
+            if self._result_queue.qsize() > self._max_queue_size:
+                self._result_queue.get()
 
     def _get_keypoints(self, rgb, points, masks):
         # preprocessing
@@ -196,9 +206,6 @@ class KeypointTrackerProcess():
         for id, binary_mask in enumerate(binary_masks):
             # ignore mask that is too large or too small
             rigid_group_id = objects[id]
-            if np.mean(binary_mask) > self._config['max_mask_ratio']:
-                print(YELLOW + f"[KeypointTracker]: Mask {rigid_group_id} is too large" + RESET)
-                continue
             # consider only foreground features
             obj_features_flat = features_flat[binary_mask.reshape(-1)] # (N, feature_dim)
             feature_pixels = np.argwhere(binary_mask) # (N, 2)
@@ -218,17 +225,17 @@ class KeypointTrackerProcess():
             feature_points_torch  = (feature_points_torch - feature_points_torch.min(0)[0]) / (feature_points_torch.max(0)[0] - feature_points_torch.min(0)[0])
             assert not torch.isnan(feature_points_torch).any() and not torch.isinf(feature_points_torch).any(), "Input data contains NaN or Inf values."
             X = torch.cat([X, feature_points_torch], dim=-1)
-            if X.shape[0] < self._config['num_candidates_per_mask']:
+            if X.shape[0] < self._num_candidates_per_mask:
                 print(YELLOW + f"[KeypointTracker]: Mask {rigid_group_id} has too few points" + RESET)
                 continue
             cluster_ids_x, cluster_centers = kmeans(
                 X=X,
-                num_clusters=self._config['num_candidates_per_mask'],
+                num_clusters=self._num_candidates_per_mask,
                 distance='euclidean',
                 device=self._device,
             )
             cluster_centers = cluster_centers.to(self._device)
-            for cluster_id in range(self._config['num_candidates_per_mask']):
+            for cluster_id in range(self._num_candidates_per_mask):
                 cluster_center = cluster_centers[cluster_id][:3]
                 member_idx = cluster_ids_x == cluster_id
                 member_points = feature_points[member_idx]
@@ -277,6 +284,6 @@ class KeypointTrackerProcess():
             closest_pixel = np.unravel_index(closest_pixel.cpu().numpy(), features.shape[:2])
             candidate_keypoints.append(points[closest_pixel[0], closest_pixel[1]])
             candidate_pixels.append(closest_pixel)
-            if self.track_type == "last_frame":
+            if self._track_type == "last_frame":
                 self._keypoint_features[idx] = features[closest_pixel[0], closest_pixel[1]]
         return candidate_keypoints, candidate_pixels

@@ -25,32 +25,39 @@ class MaskTrackerProcess():
         '''
         Set mp.set_start_method('spawn') in the main process.
         '''
+        # process settings
         self._data_queue = mp.Queue()
         self._mask_queue = mp.Queue()
         self._stop_event = mp.Event()
-        self.__sam_done_event = mp.Event()
+        self._max_queue_size = config['max_queue_size']
+        self._process = None
+
+        # random seed
+        np.random.seed(config['seed'])
+        torch.manual_seed(config['seed'])
+        torch.cuda.manual_seed(config['seed'])
+
+        # mask tracker settings
         self._num_objects = config['num_objects']
-        self._path = config['path']
         self._device = config['device']
-        self._config = config
+        # workspace bounds
+        bounds_min = np.array(config['bounds_min']).reshape(-1, 3)
+        bounds_max = np.array(config['bounds_max']).reshape(-1, 3)
+        self._bounds = np.concatenate([bounds_min, bounds_max], axis=0) # (2, 3)
+        self._max_overlap_ratio = config['max_overlap_ratio'] # max overlap ratio for masks
 
         # SAM parameters
+        self._path = config['path'] # folder path of sam model
         self._max_mask_ratio = config['max_mask_ratio']
         self._min_mask_ratio = config['min_mask_ratio']
         self._points_per_side = config['points_per_side']
         self._crop_n_layers = config['crop_n_layers']
         self._crop_n_points_downscale_factor = config['crop_n_points_downscale_factor']
         
-        bounds_min = np.array(config['bounds_min']).reshape(-1, 3)
-        bounds_max = np.array(config['bounds_max']).reshape(-1, 3)
-        self._bounds = np.concatenate([bounds_min, bounds_max], axis=0) # (2, 3)
-        self._max_overlap_ratio = config['max_overlap_ratio']
-
-        self._process = None
         self._segmented = False
         self._mask = None
         self._processor = None
-        self._objects = None
+        self._objects = None # list of object ids, count from 1
         print(GREEN + f"[MaskTracker]: Mask tracker process initialized." + RESET)
 
     def start(self):
@@ -63,6 +70,7 @@ class MaskTrackerProcess():
         self._data_queue.close()
         self._mask_queue.close()
         self._stop_event.set()
+        self._process.terminate()
         self._process.join()
         print(GREEN + f"[MaskTracker]: Mask tracker process stopped." + RESET)
     
@@ -79,14 +87,8 @@ class MaskTrackerProcess():
         Return the mask as np.ndarray, [H, W], uint8
         '''
         return self._mask_queue.get()
-    
-    def sam_done(self)->bool:
-        return self.__sam_done_event.is_set()
-    
+        
     def _run(self):
-        np.random.seed(self._config['seed'])
-        torch.manual_seed(self._config['seed'])
-        torch.cuda.manual_seed(self._config['seed'])
         while not self._stop_event.is_set():
             try:
                 data = self._data_queue.get(timeout=1)
@@ -103,27 +105,32 @@ class MaskTrackerProcess():
                 masks = [m['segmentation'] for m in masks]
                 print(GREEN + f"[MaskTracker]: {len(masks)} masks generated." + RESET)
                 length = len(masks)
+                # filter masks by area ratio
                 masks = [m for m in masks if m.sum()/(m.shape[0]*m.shape[1]) < self._max_mask_ratio]
                 masks = [m for m in masks if m.sum()/(m.shape[0]*m.shape[1]) > self._min_mask_ratio]
                 print(GREEN + f"[MaskTracker]: {length-len(masks)} masks filtered by ratio." + RESET)
                 length = len(masks)
+                # filter masks by bounds
                 masks = fileter_masks_by_bounds(masks, points, self._bounds)
                 print(GREEN + f"[MaskTracker]: {length-len(masks)} masks filtered by bounds." + RESET)
                 length = len(masks)
+                # filter masks by overlap ratio
                 masks = merge_masks(masks, self._max_overlap_ratio)
                 print(GREEN + f"[MaskTracker]: {length-len(masks)} masks merged." + RESET)
                 print(GREEN + f"[MaskTracker]: {len(masks)} masks selected." + RESET)
+                assert len(masks) > 0, "No masks generated."
+                
+                # set the number of objects
                 self._num_objects = min(len(masks), self._num_objects)
-                # DEBUG
-                # print the area ratio of each mask
                 masks = masks[:self._num_objects]
                 for i, mask in enumerate(masks):
                     print(GREEN + f"[MaskTracker]: Mask {i} area ratio: {mask.sum()/(mask.shape[0]*mask.shape[1])}" + RESET)
                 init_mask = torch.zeros(rgb.shape[:2], dtype=torch.uint8).cuda()
-                self._objects = [i + 1 for i in range(len(masks))]
+                self._objects = [i + 1 for i in range(len(masks))] # count from 1
                 for i in range(len(masks)):
                     init_mask[masks[i]>0] = self._objects[i]
                 torch.cuda.empty_cache()
+
                 self._init_cutie(rgb, init_mask)
                 self._segmented = True
 
@@ -165,7 +172,6 @@ class MaskTrackerProcess():
         masks = mask_generator.generate(rgb)
         # sorted by te predicted_iou
         masks = sorted(masks, key=lambda x: x['predicted_iou'], reverse=True)
-        self.__sam_done_event.set()
         return masks
 
     @torch.inference_mode()
@@ -179,6 +185,8 @@ class MaskTrackerProcess():
         mask = self._processor.output_prob_to_mask(output_prob)
         mask = mask.cpu().numpy()
         self._mask_queue.put(mask)
+        if self._mask_queue.qsize() > self._max_queue_size:
+            self._mask_queue.get()
         print(GREEN + f"[MaskTracker]: Cutie tracker initialized." + RESET)
 
     @torch.inference_mode()
@@ -193,3 +201,5 @@ class MaskTrackerProcess():
         mask = self._processor.output_prob_to_mask(output_prob)
         mask = mask.cpu().numpy()
         self._mask_queue.put(mask)
+        if self._mask_queue.qsize() > self._max_queue_size:
+            self._mask_queue.get()
