@@ -9,7 +9,7 @@ import multiprocessing as mp
 import airbot
 sys.path.append(os.path.dirname(__file__))
 from utils.sensor import RealSense
-from utils.utils import get_points, quat2mat, mat2quat
+from utils.utils import get_points, quat2mat, mat2quat, compute_sdf_gpu
 from mask_tracker import MaskTrackerProcess
 from keypoint_tracker import KeypointTrackerProcess
 
@@ -113,12 +113,43 @@ class RealEnviroment:
             exclude_obj_in_hand (bool): If True, excludes objects held by the robot from the SDF computation.
         
         Returns:
-            np.ndarray: A 3D numpy array representing the SDF voxels.
+            np.ndarray: A 3D numpy array representing the SDF voxels. Positive values are outside the object, negative values are inside.
         '''
-        # Trivial implementation, all set to 1e6
-        shape = np.ceil((self.bounds_max - self.bounds_min) / resolution).astype(int)
-        sdf_voxels = np.zeros(shape) + 1e6
+        cam_obs = self.get_cam_obs()
+        rgb = cam_obs['rgb']
+        depth = cam_obs['depth']
+        mask = cam_obs['mask']
+        # extract object points
+        instrinsics = self._rs.get_instrinsics()
+        extrinsics = self._cam_extrinsics
+        points = get_points(depth, instrinsics, extrinsics, mask).reshape(-1, 3)
+        bounds = np.concatenate([self.bounds_min, self.bounds_max], axis=0) # (2, 3)
+        sdf_voxels = compute_sdf_gpu(points, bounds, resolution) # (H, W, D)
         return sdf_voxels
+    
+    def get_object_points(self):
+        '''
+        Return:
+            object_points (list): list of np.ndarray, [N, 3], object points in world frame. CAUTION: the first object is the end-effector.            
+        '''
+        num_objects = self._num_objects
+        object_points = []
+        # the first object is the end-effector
+        object_points.append(self.get_collision_points())
+        cam_obs = self.get_cam_obs()
+        rgb = cam_obs['rgb']
+        depth = cam_obs['depth']
+        mask = cam_obs['mask']
+        # extract object points
+        instrinsics = self._rs.get_instrinsics()
+        extrinsics = self._cam_extrinsics
+        points = get_points(depth, instrinsics, extrinsics).reshape(-1, 3)
+        for i in range(1, num_objects + 1):
+            mask_obj = (mask == i)
+            object_points.append(points[mask_obj])
+        return object_points
+
+
 
     def get_cam_obs(self):
         '''
@@ -139,6 +170,7 @@ class RealEnviroment:
 
         instrinsics = self._rs.get_instrinsics()
         extrinsics = data['extrinsics']
+        self._cam_extrinsics = extrinsics
         points = get_points(depth, instrinsics, extrinsics)
 
         self._mask_tracker.send({
@@ -196,6 +228,7 @@ class RealEnviroment:
             color_mask = np.zeros_like(projected)
             color_mask[mask_obj] = np.array([0, 0, 255])
             projected = cv2.addWeighted(projected, 1, color_mask, 0.5, 0)
+        self._num_objects = len(objs)
         cv2.imshow("keypoints", projected)
         cv2.waitKey(0)
         cv2.destroyAllWindows()
@@ -290,7 +323,7 @@ class RealEnviroment:
         pos = self.get_ee_pos()
         pos = np.dot(self._a2w, np.array([pos[0], pos[1], pos[2], 1]))[:3]
         side_length = 0.05
-        points_num = 1000
+        points_num = 500
         points = np.random.uniform(-side_length, side_length, (points_num, 3)) + pos
         return points
 

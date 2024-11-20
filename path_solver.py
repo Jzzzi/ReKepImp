@@ -7,7 +7,7 @@ import numpy as np
 from scipy.optimize import dual_annealing, minimize
 from scipy.interpolate import RegularGridInterpolator
 sys.path.append(os.path.dirname(__file__))
-from utils.utils import unnormalize_vars, normalize_vars, convert_pose_euler2mat, convert_pose_mat2quat, get_samples_jitted, convert_pose_quat2mat, path_length, transform_keypoints, pose2mat, euler2quat, farthest_point_sampling, get_linear_interpolation_steps, linear_interpolate_poses, convert_pose_euler2quat, quat2euler, get_callable_grasping_cost_fn
+from utils.utils import unnormalize_vars, normalize_vars, convert_pose_euler2mat, convert_pose_mat2quat, get_samples_jitted, convert_pose_quat2mat, path_length, transform_keypoints, pose2mat, euler2quat, farthest_point_sampling, get_linear_interpolation_steps, linear_interpolate_poses, convert_pose_euler2quat, quat2euler, get_callable_grasping_cost_fn, GREEN, RESET
 # ====================================
 # = objective function
 # ====================================
@@ -53,7 +53,7 @@ def objective(opt_vars,
     approx_length = pos_length + rot_length * 1.0
     path_length_cost = 4.0 * approx_length
     debug_dict['path_length_cost'] = path_length_cost
-    cost += path_length_cost
+    # cost += path_length_cost
 
     # reachability cost
     # ik_cost = 0
@@ -293,7 +293,7 @@ class PathSolver:
                 options=self._config['minimizer_options'],
             )
         solve_time = time.time() - start
-
+        print(f'{GREEN}[PathSolver]: Successful!. solve time: {solve_time:.3f}s{RESET}')
         # ====================================
         # = post-process opt_result
         # ====================================

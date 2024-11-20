@@ -1,7 +1,7 @@
 device: &device 'cuda'
 seed: &seed 0
-bounds_min: &bounds_min [-0.3, -0.6, 0.0]
-bounds_max: &bounds_max [0.5, 0.0, 0.5]
+bounds_min: &bounds_min [-0.2, -0.4, 0.0]
+bounds_max: &bounds_max [0.3, 0.0, 0.3]
 path: &path '/home/liujk/ReKepImp'
 instrinsics: &instrinsics [386.74, 0, 326.66, 0, 386.28, 247.33, 0, 0, 1]
 distortions: &distortions [-0.0556738413870335, 0.0655610412359238, -0.000339997815899551, 0.000355891766957939, -0.021365724503994]
@@ -27,7 +27,7 @@ mask_tracker:
   path: *path
   device: *device
   max_mask_ratio: 0.3
-  min_mask_ratio: 0.002
+  min_mask_ratio: 0.004
   # SAM params
   points_per_side: 64
   crop_n_layers: 1

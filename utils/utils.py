@@ -18,7 +18,7 @@ RED = "\033[31m"
 GREEN = "\033[32m"
 YELLOW = "\033[33m"
 
-def get_cam_points(depth:np.ndarray, instrinsics:np.ndarray)->np.ndarray:
+def get_cam_points(depth:np.ndarray, instrinsics:np.ndarray, mask:np.ndarray=None)->np.ndarray:
     '''
     depth: [H, W], depth image in z16 format
     points, [H, W, 3], 3D points in camera coordinate
@@ -26,6 +26,9 @@ def get_cam_points(depth:np.ndarray, instrinsics:np.ndarray)->np.ndarray:
     h, w = depth.shape
     # conver z16 to float in unit of meters
     depth = depth.astype(float) * 0.001
+    if mask is not None:
+        binary_mask = (mask > 0)
+        depth[~binary_mask] = 0
     instrinsics = instrinsics.reshape(-1)
     assert instrinsics.shape == (9,), instrinsics.shape
     fx, fy, cx, cy = instrinsics[0], instrinsics[4], instrinsics[2], instrinsics[5]
@@ -36,7 +39,7 @@ def get_cam_points(depth:np.ndarray, instrinsics:np.ndarray)->np.ndarray:
     points = direction * depth[:, :, np.newaxis]
     return points
 
-def get_points(depth:np.ndarray, instrinsics:np.ndarray, extrinsics:np.ndarray)->np.ndarray:
+def get_points(depth:np.ndarray, instrinsics:np.ndarray, extrinsics:np.ndarray, mask:np.ndarray=None)->np.ndarray:
     '''
     Transforms depth map points from camera coordinates to world coordinates.
 
@@ -48,7 +51,7 @@ def get_points(depth:np.ndarray, instrinsics:np.ndarray, extrinsics:np.ndarray)-
     Returns:
         np.ndarray: A 3D array of shape (h, w, 3) representing the transformed points in world coordinates.
     '''
-    points = get_cam_points(depth, instrinsics)
+    points = get_cam_points(depth, instrinsics, mask)
     h, w = depth.shape
     points = points.reshape(-1, 3)
     points = points @ extrinsics[:3, :3].T + extrinsics[:3, 3]
@@ -709,14 +712,79 @@ def merge_masks(masks, ratio):
         masks: a list of np.ndarray of shape [H, W], masks
         ratio: float, max overlap ratio
     '''
+    # Check whether mask i is a subset of mask j
     for i in range(len(masks)):
+        if masks[i].sum() == 0:
+            continue
         for j in range(i+1, len(masks)):
+            if masks[j].sum() == 0:
+                continue
             mask_i = masks[i]
             mask_j = masks[j]
-            overlap = np.logical_and(mask_i, mask_j).sum() / np.logical_or(mask_i, mask_j).sum()
+            overlap = np.logical_and(mask_i, mask_j).sum() / mask_i.sum()
             if overlap > ratio:
-                # move mask j
-                masks[j] = np.zeros_like(mask_j)
+                # move mask i
+                masks[i] = np.zeros_like(mask_i)
+                break
     # delete empty masks
     masks = [mask for mask in masks if mask.sum() > 0]
     return masks
+
+def compute_sdf_gpu(points:np.ndarray, bounds:np.ndarray, voxel_size:float, chunk_size:int=1024)->np.ndarray:
+    '''
+    Compute signed distance field on GPU
+    Args:
+        points: np.ndarray, [N, 3], points in world frame
+        bounds: np.ndarray, [2, 3], bounds in world frame
+        voxel_size: float, voxel size
+        chunk_size: int, chunk size for computing signed distance field
+    Returns:
+        np.ndarray: [H, W, D], signed distance field
+    '''
+    assert points.shape[-1] == 3, points.shape
+    assert bounds.shape == (2, 3), bounds.shape
+    assert voxel_size > 0, voxel_size
+    # convert points to voxel coordinates
+    min_bound = bounds[0]
+    max_bound = bounds[1]
+
+    x = torch.linspace(min_bound[0], max_bound[0], int((max_bound[0] - min_bound[0]) / voxel_size) + 1).cuda()
+    y = torch.linspace(min_bound[1], max_bound[1], int((max_bound[1] - min_bound[1]) / voxel_size) + 1).cuda()
+    z = torch.linspace(min_bound[2], max_bound[2], int((max_bound[2] - min_bound[2]) / voxel_size) + 1).cuda()
+    shape = (len(x), len(y), len(z))
+
+    grid = torch.stack(torch.meshgrid(x, y, z), dim=-1).reshape(-1, 3).float().cuda()
+    points = torch.tensor(points).float().cuda()
+
+    # compute signed distance field
+    sdf_values = torch.empty(len(grid)).cuda()
+    for i in range(0, len(grid), chunk_size):
+        distances_chunk = torch.cdist(grid[i:i+chunk_size], points)
+        sdf_values[i:i+chunk_size] = torch.min(distances_chunk, dim=1)[0]
+    sdf_values = sdf_values.cpu().numpy().reshape(shape)
+
+    return sdf_values
+
+# def get_points_cloud(depth:np.ndarray, instrinsics:np.ndarray, extrinsics:np.ndarray, mask:np.ndarray)->np.ndarray:
+#     '''
+#     Get point cloud from depth image
+#     Args:
+#         depth: np.ndarray, [H, W], depth image
+#         instrinsics: np.ndarray, [3, 3], camera instrinsics
+#         extrinsics: np.ndarray, [4, 4], camera extrinsics
+#         mask: np.ndarray, [H, W], mask
+#     Returns:
+#         points: list of np.ndarray, [N, 3], points in world frame
+#     '''
+#     assert depth.ndim == 2, depth.shape
+#     assert instrinsics.shape == (3, 3), instrinsics.shape
+#     assert extrinsics.shape == (4, 4), extrinsics.shape
+#     assert mask.shape == depth.shape, mask.shape
+#     all_points = get_points(depth, instrinsics, extrinsics)
+#     object_points = []
+#     objects = np.unique(mask)
+#     objects = objects[objects != 0]
+#     for obj in objects:
+#         object_mask = (mask == obj)
+#         object_points.append(all_points[object_mask])
+    return object_points

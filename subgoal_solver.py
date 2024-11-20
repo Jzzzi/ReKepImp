@@ -8,7 +8,7 @@ from scipy.optimize import dual_annealing, minimize
 from scipy.interpolate import RegularGridInterpolator
 
 sys.path.append(os.path.dirname(__file__))
-from utils.utils import unnormalize_vars, normalize_vars, pose2mat, euler2quat, consistency, transform_keypoints, farthest_point_sampling, quat2euler, get_callable_grasping_cost_fn
+from utils.utils import unnormalize_vars, normalize_vars, pose2mat, euler2quat, consistency, transform_keypoints, farthest_point_sampling, quat2euler, get_callable_grasping_cost_fn, GREEN, RESET
 # import transform_utils as T
 # from utils import (
 #     transform_keypoints,
@@ -27,11 +27,6 @@ def objective(opt_vars,
             path_constraints,
             init_pose_homo,
             is_grasp_stage,
-            sdf_func = None,
-            collision_points_centered = None,
-            ik_solver = None,
-            initial_joint_pos = None,
-            reset_joint_pos = None,
             return_debug_dict = False):
     '''
     The function to calculate the optimization objective.
@@ -206,10 +201,7 @@ class SubgoalSolver:
             keypoint_movable_mask,
             goal_constraints,
             path_constraints,
-            sdf_voxels,
-            collision_points,
             is_grasp_stage,
-            initial_joint_pos,
             from_scratch=False,
             ):
         """
@@ -231,7 +223,6 @@ class SubgoalSolver:
         # downsample collision points
         if collision_points is not None and collision_points.shape[0] > self._config['max_collision_points']:
             collision_points = farthest_point_sampling(collision_points, self._config['max_collision_points'])
-        sdf_func = self._setup_sdf(sdf_voxels)
         # ====================================
         # = setup bounds and initial guess
         # ====================================
@@ -295,8 +286,9 @@ class SubgoalSolver:
                 method='SLSQP',
                 options=self._config['minimizer_options'],
             )
-        solve_time = time.time() - start
 
+        solve_time = time.time() - start
+        print(f'{GREEN}[SubgoalSolver]: Successful!. solve time: {solve_time:.3f}s{RESET}')
         # ====================================
         # = post-process opt_result
         # ====================================
