@@ -28,7 +28,7 @@ def main():
                  [255,0,255],
                  [255,255,0]]
 
-    mask_tracker = MaskTrackerProcess(config['mask_tracker'])
+    mask_tracker = MaskTrackerProcess(config['mask_tracker'], True)
     mask_tracker.start()
 
     data = None

@@ -198,9 +198,10 @@ class KeypointTrackerProcess():
         candidate_keypoints = []
         candidate_pixels = []
         candidate_rigid_group_ids = [] # counts from 1
-        # exclude the background 0
+        # exclude the background 0 and robot arm 1
         objects = np.unique(masks)
         objects = objects[objects != 0]
+        objects = objects[objects != 1]
         # convert masks to binary masks
         binary_masks = [masks == uid for uid in objects]
         for id, binary_mask in enumerate(binary_masks):
