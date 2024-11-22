@@ -26,7 +26,7 @@ def main():
 
 
     mp.set_start_method('spawn')
-    tracker_process = MaskTrackerProcess(config['mask_tracker'])
+    tracker_process = MaskTrackerProcess(config['mask_tracker'], manual=True)
     tracker_process.start()
 
     obj_masks = [[0,0,255],
