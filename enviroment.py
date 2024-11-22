@@ -49,6 +49,7 @@ class RealEnviroment:
         self._stop_event = None
 
         self._num_objects = None
+        self._objects_grasped = None
         self._key2obj = []
         self._instrinsics = None
         self._extrinsics = None
@@ -57,9 +58,6 @@ class RealEnviroment:
         while not stop_event.is_set():
             self.observe(update_only=True)
             time.sleep(0.1)
-    # =====================================================================
-    # External API
-    # =====================================================================
 
     def start(self):
         # Initialize the arm
@@ -82,7 +80,7 @@ class RealEnviroment:
         instrinsics = data['instrinsics']
         extrinsics = data['extrinsics']
         points = get_points(depth, instrinsics, extrinsics)
-        self._mask_tracker = MaskTrackerProcess(self._global_config['mask_tracker'])
+        self._mask_tracker = MaskTrackerProcess(self._global_config['mask_tracker'], manual=True)
         self._mask_tracker.start()
         self._mask_tracker.send({
             'rgb': rgb,
@@ -112,7 +110,7 @@ class RealEnviroment:
             obs (dict): observation dict
             {
                 'rgb': np.ndarray, [H, W, 3], RGB image
-                'depth': np.ndarray, [H, W], depth image in meters
+                'points': np.ndarray, [H, W, 3], points in world frame
                 'keypoints': np.ndarray, [N, 3], keypoints in world frame
                 'mask': np.ndarray, [H, W], mask image
                 'projected': np.ndarray, [H, W, 3], projected image with keypoints
@@ -144,7 +142,7 @@ class RealEnviroment:
         ee_pos = self.get_ee_pos() # ee pos in world frame xyz
         ee_keypoint = np.array([ee_pos[0], ee_pos[1], ee_pos[2]]).reshape(1, 3)
         keypoints = np.concatenate([ee_keypoint, keypoints], axis=0)
-        obj_ids = np.concatenate([[0], obj_ids], axis=0)
+        obj_ids = np.concatenate([[1], obj_ids], axis=0)
         # get pixel coordinates of ee keypoint
         c2w = extrinsics
         w2c = np.linalg.inv(c2w)
@@ -178,7 +176,7 @@ class RealEnviroment:
 
         return {
             'rgb': rgb,
-            'depth': depth,
+            'points': points,
             'mask': mask,
             'keypoints': keypoints,
             'projected': projected,
@@ -210,10 +208,46 @@ class RealEnviroment:
             color_mask[mask_obj] = np.array([0, 0, 255])
             projected = cv2.addWeighted(projected, 1, color_mask, 0.5, 0)
         self._num_objects = len(objs)
+        self._objects_grasped = np.zeros(self._num_objects+1) # 0 meaningless, self._objects_grasped[idx] indicate whether the object idx is grasped, idx=1 is the robot
         cv2.imshow("keypoints", projected)
         cv2.waitKey(0)
         cv2.destroyWindow("keypoints")
 
+    def get_sdf_voxels(self, resolution, exclude_robot=True, exclude_obj_in_hand=True):
+        '''
+        Computes the signed distance field (SDF) voxels for the environment, with options to exclude certain objects.
+        
+        Parameters:
+            resolution (float): Resolution of the SDF grid.
+            exclude_robot (bool): If True, excludes robot from the SDF computation.
+            exclude_obj_in_hand (bool): If True, excludes objects held by the robot from the SDF computation.
+        
+        Returns:
+            np.ndarray: A 3D numpy array representing the SDF voxels. Positive values are outside the object, negative values are inside.
+        '''
+        observation = self.observe()
+        points = observation['points']
+        mask  = observation['mask']
+        if exclude_robot:
+            # object 1 is always the robot
+            robot_mask = (mask == 1)
+            # expand the robot mask
+            kernel = np.ones((5, 5), np.uint8)
+            robot_mask = cv2.dilate(robot_mask.astype(np.uint8), kernel, iterations=1)
+            points[robot_mask] = 0
+        if exclude_obj_in_hand:
+            hand_object_idx = np.where(self._objects_grasped == 1)[0]
+            for idx in hand_object_idx:
+                obj_mask = (mask == idx)
+                points[obj_mask] = 0
+        points = points.reshape(-1, 3)
+        bounds = np.concatenate([self._bounds_min, self._bounds_max], axis=0) # [2, 3]
+        # reconstruct the sdf
+        sdf = compute_sdf_gpu(points, bounds, resolution)
+        # reverse the sdf so that the far the object, the lower the value
+        sdf = -sdf
+        return sdf
+    
     def get_object_by_keypoint(self, keypoint_idx):
         '''
         Retrieves the object associated with a given keypoint index.
@@ -237,12 +271,26 @@ class RealEnviroment:
             np.ndarray: Array of collision points, shape (N, 3).
         '''
         # TODO
-        pos = self.get_ee_pos()
-        pos = np.dot(self._a2w, np.array([pos[0], pos[1], pos[2], 1]))[:3]
-        side_length = 0.05
-        points_num = 500
-        points = np.random.uniform(-side_length, side_length, (points_num, 3)) + pos
-        return points
+        observation = self.observe()
+        points = observation['points']
+        mask = observation['mask']
+        hand_object_idx = np.where(self._objects_grasped == 1)[0]
+        collision_points = []
+        for idx in hand_object_idx:
+            obj_mask = (mask == idx)
+            obj_points = points[obj_mask]
+            # downsample to 500
+            if obj_points.shape[0] > 500:
+                obj_points = obj_points[np.random.choice(obj_points.shape[0], 500, replace=False)]
+            collision_points.append(obj_points)
+        collision_points = np.concatenate(collision_points, axis=0) # [N, 3]
+        ee_points = self.get_ee_pos().reshape(1, 3)
+        # sample 100 points around the ee
+        if noise:
+            noise = np.random.normal(0, 0.02, (100, 3))
+            ee_points = np.concatenate([ee_points] * 100, axis=0) + noise
+        collision_points = np.concatenate([collision_points, ee_points], axis=0)
+        return collision_points
 
     def reset(self):
         '''
@@ -253,7 +301,7 @@ class RealEnviroment:
         '''
         self.start()
 
-    def is_grasping(self, candidate_obj = None):
+    def is_grasping(self, candidate_obj):
         '''
         Checks if the robot’s gripper is currently grasping an object.
         
@@ -263,27 +311,9 @@ class RealEnviroment:
         Returns:
             bool: True if the robot is grasping the object, otherwise False.
         '''
-        observation = self.observe()
-        if (0.00 <= self._arm.get_current_end() and self._arm.get_current_end() <= 0.5):
-            instrinsics = self._instrinsics
-            extrinsics = self._extrinsics
-            mask = observation['mask']
-            ee_pos = self.get_ee_pos()
-            # get pixel coordinates of ee keypoint
-            w2c = np.linalg.inv(extrinsics)
-            ee_pos_cam = np.dot(w2c[:3, :3], ee_pos) + w2c[:3, 3]
-            x, y, z = ee_pos_cam
-            instrinsics = instrinsics.reshape(-1)
-            fx, fy, cx, cy = instrinsics[0], instrinsics[4], instrinsics[2], instrinsics[5]
-            u = int(fx * x / z + cx)
-            v = int(fy * y / z + cy)
-            ee_pixels = (v, u)
-            if mask[ee_pixels] == candidate_obj:
-                return 1
-            else:
-                return 0
-        else:
-            return 0
+        if self._objects_grasped[candidate_obj] == 1:
+            return True
+        return False
     
     def get_ee_pose(self):
         '''
@@ -336,6 +366,26 @@ class RealEnviroment:
         '''
         self._arm.set_target_end(0.0)
         self._last_end = 0.0
+        # check whether the gripper is grasping an object
+        if (0.00 <= self._arm.get_current_end() and self._arm.get_current_end() <= 0.5):
+            observation = self.observe()
+            mask = observation['mask']
+            points = observation['points']
+            object_pos = []
+            for obj_idx in range(1, self._num_objects+1):
+                obj_mask = (mask == obj_idx)
+                obj_points = points[obj_mask]
+                # get the mean position of the object
+                obj_pos = np.mean(obj_points, axis=0).reshape(3)
+                object_pos.append(obj_pos)
+            object_pos = np.array(object_pos)
+            ee_pos = self.get_ee_pos()
+            # set the nearest object to be grasped
+            dist = np.linalg.norm(object_pos - ee_pos, axis=1)
+            nearest_obj_idx = np.argmin(dist)
+            self._objects_grasped = np.zeros(self._num_objects+1)
+            self._objects_grasped[nearest_obj_idx + 1] = 1 # 0 meaningless, self._objects_grasped[idx] indicate whether the object idx is grasped, idx=1 is the robot
+        self._last_end = 0.0
 
     def open_gripper(self):
         '''
@@ -345,7 +395,9 @@ class RealEnviroment:
             None
         '''
         self._arm.set_target_end(1.0)
+        self._objects_grasped = np.zeros(self._num_objects+1)
         self._last_end = 1.0
+        
 
     def get_last_og_gripper_action(self):
         '''
@@ -462,9 +514,6 @@ class RealEnviroment:
         self._keypoint_tracker.stop()
         print(GREEN + "[RealEnviroment]: RealEnviroment stopped" + RESET)
 
-    # ===========================
-    # Not used anymore
-    # ===========================
     def get_sdf_voxels(self, resolution, exclude_robot=True, exclude_obj_in_hand=True):
         '''
         Computes the signed distance field (SDF) voxels for the environment, with options to exclude certain objects.
@@ -477,17 +526,29 @@ class RealEnviroment:
         Returns:
             np.ndarray: A 3D numpy array representing the SDF voxels. Positive values are outside the object, negative values are inside.
         '''
-        cam_obs = self.get_cam_obs()
-        rgb = cam_obs['rgb']
-        depth = cam_obs['depth']
-        mask = cam_obs['mask']
-        # extract object points
-        instrinsics = self._rs.get_instrinsics()
-        extrinsics = self._cam_extrinsics
-        points = get_points(depth, instrinsics, extrinsics, mask).reshape(-1, 3)
-        bounds = np.concatenate([self._bounds_min, self._bounds_max], axis=0) # (2, 3)
-        sdf_voxels = compute_sdf_gpu(points, bounds, resolution) # (H, W, D)
-        return sdf_voxels
+        observation = self.observe()
+        points = observation['points']
+        mask  = observation['mask']
+        if exclude_robot:
+            # object 1 is always the robot
+            robot_mask = (mask == 1)
+            # expand the robot mask
+            kernel = np.ones((5, 5), np.uint8)
+            robot_mask = cv2.dilate(robot_mask.astype(np.uint8), kernel, iterations=1)
+            points[robot_mask] = 0
+        if exclude_obj_in_hand:
+            hand_object_idx = np.where(self._objects_grasped == 1)[0]
+            for idx in hand_object_idx:
+                obj_mask = (mask == idx)
+                points[obj_mask] = 0
+        points = points.reshape(-1, 3)
+        bounds = np.concatenate([self._bounds_min, self._bounds_max], axis=0) # [2, 3]
+        # reconstruct the sdf
+        sdf = compute_sdf_gpu(points, bounds, resolution)
+        # reverse the sdf so that the far the object, the lower the value
+        sdf = -sdf
+        return sdf
+
 
     def save_video(self, save_path=None):
         '''

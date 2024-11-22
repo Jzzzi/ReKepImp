@@ -748,13 +748,19 @@ def compute_sdf_gpu(points:np.ndarray, bounds:np.ndarray, voxel_size:float, chun
     min_bound = bounds[0]
     max_bound = bounds[1]
 
+
     x = torch.linspace(min_bound[0], max_bound[0], int((max_bound[0] - min_bound[0]) / voxel_size) + 1).cuda()
     y = torch.linspace(min_bound[1], max_bound[1], int((max_bound[1] - min_bound[1]) / voxel_size) + 1).cuda()
     z = torch.linspace(min_bound[2], max_bound[2], int((max_bound[2] - min_bound[2]) / voxel_size) + 1).cuda()
     shape = (len(x), len(y), len(z))
 
-    grid = torch.stack(torch.meshgrid(x, y, z), dim=-1).reshape(-1, 3).float().cuda()
+    grid = torch.stack(torch.meshgrid(x, y, z, indexing='ij'), dim=-1).reshape(-1, 3).float().cuda() # [H*W*D, 3]
     points = torch.tensor(points).float().cuda()
+    # filter points by bounds
+    inbound_mask = (points[:, 0] >= min_bound[0]) & (points[:, 0] <= max_bound[0]) & \
+               (points[:, 1] >= min_bound[1]) & (points[:, 1] <= max_bound[1]) & \
+               (points[:, 2] >= min_bound[2]) & (points[:, 2] <= max_bound[2])
+    points = points[inbound_mask]
 
     # compute signed distance field
     sdf_values = torch.empty(len(grid)).cuda()
@@ -764,27 +770,3 @@ def compute_sdf_gpu(points:np.ndarray, bounds:np.ndarray, voxel_size:float, chun
     sdf_values = sdf_values.cpu().numpy().reshape(shape)
 
     return sdf_values
-
-# def get_points_cloud(depth:np.ndarray, instrinsics:np.ndarray, extrinsics:np.ndarray, mask:np.ndarray)->np.ndarray:
-#     '''
-#     Get point cloud from depth image
-#     Args:
-#         depth: np.ndarray, [H, W], depth image
-#         instrinsics: np.ndarray, [3, 3], camera instrinsics
-#         extrinsics: np.ndarray, [4, 4], camera extrinsics
-#         mask: np.ndarray, [H, W], mask
-#     Returns:
-#         points: list of np.ndarray, [N, 3], points in world frame
-#     '''
-#     assert depth.ndim == 2, depth.shape
-#     assert instrinsics.shape == (3, 3), instrinsics.shape
-#     assert extrinsics.shape == (4, 4), extrinsics.shape
-#     assert mask.shape == depth.shape, mask.shape
-#     all_points = get_points(depth, instrinsics, extrinsics)
-#     object_points = []
-#     objects = np.unique(mask)
-#     objects = objects[objects != 0]
-#     for obj in objects:
-#         object_mask = (mask == obj)
-#         object_points.append(all_points[object_mask])
-    return object_points

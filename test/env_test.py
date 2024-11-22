@@ -19,7 +19,7 @@ def image_show_thread(stop_event):
     while not stop_event.is_set():
         observation = rw.observe()
         projeted = observation['projected']
-        cv2.imshow('keypoints', projeted)
+        cv2.imshow('test', projeted)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             cv2.destroyAllWindows()
             break
@@ -29,7 +29,7 @@ if __name__ == "__main__":
         config = yaml.load(f, Loader=yaml.FullLoader)
     rw = RealEnviroment(config)
     rw.reset()
-    rw.register_keypoints()
+    # rw.register_keypoints()
     step = 0
     stop_event = threading.Event()
     t = threading.Thread(target=image_show_thread, args=(stop_event,))

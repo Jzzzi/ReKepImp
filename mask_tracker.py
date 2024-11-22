@@ -222,7 +222,7 @@ class MaskTrackerProcess():
                 bgr_image = cv2.addWeighted(bgr_image, 1, mask_rgb, 0.5, 0)
                 print(GREEN + f"[MaskTracker]: Mask {len(masks) - 1} selected." + RESET)
             elif key == ord('q'):
-                cv2.destroyAllWindows()
+                cv2.destroyWindow('Maskselection')
                 break
         
         # merge masks
