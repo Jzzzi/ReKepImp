@@ -6,6 +6,10 @@ import threading
 
 import cv2
 import numpy as np
+import open3d as o3d
+import matplotlib.pyplot as plt
+from skimage.measure import marching_cubes
+
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from enviroment import RealEnviroment
@@ -28,33 +32,25 @@ def control_arm_thread():
             break
     # print('stop control arm thread')
 
+def visualize_sdf(sdf):
+    vertices, faces, _, _ = marching_cubes(sdf, level=0.05)
+    mesh = o3d.geometry.TriangleMesh()
+    mesh.vertices = o3d.utility.Vector3dVector(vertices)
+    mesh.triangles = o3d.utility.Vector3iVector(faces)
+    o3d.visualization.draw_geometries([mesh])
+
 if __name__ == "__main__":
     with open('./config/config.yaml') as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
     rw = RealEnviroment(config)
     rw.reset()
-    # rw.register_keypoints()
     step = 0
-    t = threading.Thread(target=control_arm_thread)
-    t.start()
-    while True:
-        observation = rw.observe()
-        projected = observation['projected']
-        mask = observation['mask']
-        bin_mask = mask > 0
-
-        # 创建高亮图层
-        highlight_layer = np.zeros_like(projected, dtype=np.uint8)
-        highlight_layer[bin_mask] = [0, 0, 255]  # 设置红色高亮
-
-        # 将高亮图层叠加到原图像上
-        alpha = 0.5  # 高亮区域的透明度
-        highlighted = cv2.addWeighted(projected, 1.0, highlight_layer, alpha, 0)
-        cv2.imshow('test', highlighted)
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            cv2.destroyAllWindows()
-            break
-    stop_event.set()
-    t.join()
-    rw.execute_action([0, 0, 0.4, 0, 0, 0, 1, 0], wait=True)
+    rw.execute_action([0, 0, 0.4, 0, 0, 0, 1, 0], wait=False)
+    import time
+    time.sleep(3)
+    try:
+        sdf = - rw.get_sdf_voxels(resolution=0.02)
+        visualize_sdf(sdf)
+    except KeyboardInterrupt:
+        pass
     rw.stop()

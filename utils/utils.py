@@ -730,7 +730,7 @@ def merge_masks(masks, ratio):
     masks = [mask for mask in masks if mask.sum() > 0]
     return masks
 
-def compute_sdf_gpu(points:np.ndarray, bounds:np.ndarray, voxel_size:float, chunk_size:int=1024)->np.ndarray:
+def compute_sdf_gpu(points:np.ndarray, bounds:np.ndarray, voxel_size:float, chunk_size:int=2048)->np.ndarray:
     '''
     Compute signed distance field on GPU
     Args:

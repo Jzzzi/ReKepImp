@@ -1,6 +1,4 @@
 import time
-import random
-from typing import Union
 import threading
 import queue
 
@@ -13,19 +11,7 @@ RED = "\033[31m"
 GREEN = "\033[32m"
 YELLOW = "\033[33m"
 
-class RealSense():
-    '''
-    Intrinsic of "Color" / 640x480 / {YUYV/RGB8/BGR8/RGBA8/BGRA8/Y8}
-    Width:      	640
-    Height:     	480
-    PPX:        	326.660308837891
-    PPY:        	247.326507568359
-    Fx:         	386.740875244141
-    Fy:         	386.278381347656
-    Distortion: 	Inverse Brown Conrady
-    Coeffs:     	-0.0556738413870335  	0.0655610412359238  	-0.000339997815899551  	0.000355891766957939  	-0.021365724503994  
-    FOV (deg):  	79.2 x 63.69
-    '''
+class RealSense:
     def __init__(self, config):
         self._pipeline = rs.pipeline()
         self._config = rs.config()
@@ -34,28 +20,28 @@ class RealSense():
         fps = config['fps']
         self._max_queue_size = config['max_queue_size']
         self._config.enable_stream(rs.stream.color, w, h, rs.format.bgr8, fps)
-        self._config.enable_stream(rs.stream.depth, w, h, rs.format.z16, fps)        
+        self._config.enable_stream(rs.stream.depth, w, h, rs.format.z16, fps)
+        self._align = rs.align(rs.stream.color)
 
         self._extrinsics = None
         self._tag_length = config['extrinsic_calibrator']['tag_length']
-        self._instrinsics = np.asanyarray(config['instrinsics']).reshape(3, 3)
-        self._distortion = np.asanyarray(config['distortions']).reshape(-1)
+        self._instrinsics = None
         
         self._queue = queue.Queue()
         self._thread = None
         self._stop_event = threading.Event()
 
     def start(self):
-        # start the sensor in the thread
+        # Start the sensor in the thread
         print(GREEN + "[RealSense]: Starting RealSense sensor..." + RESET)
         self._thread = threading.Thread(target=self._run)
         self._thread.start()
-        time.sleep(1) # wait for auto-exposure to stabilize
+        time.sleep(1)  # Wait for auto-exposure to stabilize
         print(GREEN + "[RealSense]: RealSense sensor started." + RESET)
 
     def get(self):
         '''
-        return a dict
+        Return a dict:
         {
             "timestamp": float,
             "color": np.ndarray, [H, W, 3], BGR
@@ -68,61 +54,82 @@ class RealSense():
         except:
             print(YELLOW + "[RealSense]: Failed to get RealSense data within 1 second." + RESET)
             return None
-    
+
     def stop(self):
         print(GREEN + "[RealSense]: Stopping RealSense sensor..." + RESET)
         self._stop_event.set()
         self._thread.join()
-        print(GREEN + "[RealSense]: RealSense sensor stopped." + RESET)    
+        print(GREEN + "[RealSense]: RealSense sensor stopped." + RESET)
 
-    def get_instrinsics(self):
-        '''
-        return instrinsics matrix, np.ndarray, [3, 3]
-        '''
-        return self._instrinsics
-    
+    def _get_instrinsics(self):
+        profile = self._pipeline.start(self._config)
+
+        # Get intrinsics
+        color_stream_profile = profile.get_stream(rs.stream.color).as_video_stream_profile()
+        depth_stream_profile = profile.get_stream(rs.stream.depth).as_video_stream_profile()
+        color_intrinsics = color_stream_profile.get_intrinsics()
+        self._instrinsics = np.zeros((3, 3), dtype=np.float32)
+        self._instrinsics[0, 0] = color_intrinsics.fx
+        self._instrinsics[1, 1] = color_intrinsics.fy
+        self._instrinsics[0, 2] = color_intrinsics.ppx
+        self._instrinsics[1, 2] = color_intrinsics.ppy
+        self._instrinsics[2, 2] = 1
+        self._distortion = np.array(color_intrinsics.coeffs)
+
+
     def _run(self):
         try:
-            self._pipeline.start(self._config)
+            self._get_instrinsics()
+
         except Exception as e:
             print(RED + "[RealSense]: Failed to start the pipeline." + RESET)
             print(e)
+            return
 
         self._extrinsics = self._get_extrinsic()
+
         while not self._stop_event.is_set():
             try:
                 frames = self._pipeline.wait_for_frames()
+
+                # Align the frames
+                aligned_frames = self._align.process(frames)
+
+                # Extract aligned color and depth frames
+                color_frame = aligned_frames.get_color_frame()
+                depth_frame = aligned_frames.get_depth_frame()
+
+                if not color_frame or not depth_frame:
+                    continue
+
+                timestamp = time.time()
+
+                # Convert frames to numpy arrays
+                color_image = np.asanyarray(color_frame.get_data())
+                depth_image = np.asanyarray(depth_frame.get_data())
+
+                self._queue.put({
+                    "timestamp": timestamp,
+                    "color": color_image,
+                    "depth": depth_image,
+                    "extrinsics": self._extrinsics,
+                    "instrinsics": self._instrinsics,
+                })
+
+                if self._queue.qsize() > self._max_queue_size:
+                    self._queue.get()
+
             except Exception as e:
                 print(e)
                 continue
-            
-            timestamp = time.time()
-            color_frame = frames.get_color_frame()
-            depth_frame = frames.get_depth_frame()
-
-            if not color_frame or not depth_frame:
-                return None
-
-            color_image = np.asanyarray(color_frame.get_data())
-            depth_image = np.asanyarray(depth_frame.get_data())
-
-            self._queue.put({
-                "timestamp": timestamp,
-                "color": color_image,
-                "depth": depth_image,
-                "extrinsics": self._extrinsics,
-                "instrinsics": self._instrinsics,
-            })
-
-            if self._queue.qsize() > self._max_queue_size:
-                self._queue.get()
 
         self._pipeline.stop()
 
     def _get_extrinsic(self):
         try:
             frames = self._pipeline.wait_for_frames()
-            color_frame = frames.get_color_frame()
+            aligned_frames = self._align.process(frames)
+            color_frame = aligned_frames.get_color_frame()
         except Exception as e:
             print(RED + "[RealSense]: Failed to capture frames for extrinsic calibration." + RESET)
             return None
@@ -147,19 +154,20 @@ class RealSense():
         ], dtype=np.float32)
 
         corners = corners[0].reshape(4, 2)
-        success, rvec, tvec = cv2.solvePnP(obj_points, corners, self._instrinsics, self._distortion)
-
+        success, rvec, tvec = cv2.solvePnP(obj_points, corners,
+                                             self._instrinsics,
+                                             self._distortion)
         if not success:
             print(RED + "[RealSense]: Failed to estimate pose." + RESET)
             return None
 
-        # 将 rvec 转换为旋转矩阵
+        # Convert rvec to rotation matrix
         rmat, _ = cv2.Rodrigues(rvec)
 
-        # 计算 c2w 变换矩阵
+        # Compute c2w transformation matrix
         c2w = np.eye(4)
-        c2w[:3, :3] = rmat.T  # 旋转矩阵的转置
-        c2w[:3, 3] = -rmat.T @ tvec.flatten()  # 平移向量的逆变换
+        c2w[:3, :3] = rmat.T  # Transpose of rotation matrix
+        c2w[:3, 3] = -rmat.T @ tvec.flatten()  # Inverse translation
         print(GREEN + "[RealSense]: Successfully estimated extrinsic matrix." + RESET)
         print(GREEN + "[RealSense]: Extrinsic matrix:" + RESET)
         print(GREEN + str(c2w) + RESET)

@@ -222,8 +222,9 @@ class KeypointTrackerProcess():
             feature_points_torch = torch.tensor(feature_points, dtype=features_pca.dtype, device=features_pca.device) # (N, 3)
             if (torch.abs(feature_points_torch.max(0)[0] - feature_points_torch.min(0)[0])<1e-6).any():
                 print(YELLOW + f"[KeypointTracker]: Mask {rigid_group_id} has odd points" + RESET)
-                continue
-            feature_points_torch  = (feature_points_torch - feature_points_torch.min(0)[0]) / (feature_points_torch.max(0)[0] - feature_points_torch.min(0)[0])
+                feature_points_torch = torch.zeros_like(feature_points_torch)
+            else:
+                feature_points_torch  = (feature_points_torch - feature_points_torch.min(0)[0]) / (feature_points_torch.max(0)[0] - feature_points_torch.min(0)[0])
             assert not torch.isnan(feature_points_torch).any() and not torch.isinf(feature_points_torch).any(), "Input data contains NaN or Inf values."
             X = torch.cat([X, feature_points_torch], dim=-1)
             if X.shape[0] < self._num_candidates_per_mask:

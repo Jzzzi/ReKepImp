@@ -225,6 +225,7 @@ class RealEnviroment:
         Returns:
             np.ndarray: A 3D numpy array representing the SDF voxels. Positive values are outside the object, negative values are inside.
         '''
+        tic = time.time()
         observation = self.observe()
         points = observation['points']
         mask  = observation['mask']
@@ -246,6 +247,7 @@ class RealEnviroment:
         sdf = compute_sdf_gpu(points, bounds, resolution)
         # reverse the sdf so that the far the object, the lower the value
         sdf = -sdf
+        print(GREEN + f"[RealEnviroment]: SDF computation time: {time.time() - tic:.2f}s" + RESET)
         return sdf
     
     def get_object_by_keypoint(self, keypoint_idx):
@@ -542,7 +544,7 @@ class RealEnviroment:
                 obj_mask = (mask == idx)
                 points[obj_mask] = 0
         points = points.reshape(-1, 3)
-        bounds = np.concatenate([self._bounds_min, self._bounds_max], axis=0) # [2, 3]
+        bounds = np.stack([self._bounds_min, self._bounds_max], axis=0) # [2, 3]
         # reconstruct the sdf
         sdf = compute_sdf_gpu(points, bounds, resolution)
         # reverse the sdf so that the far the object, the lower the value

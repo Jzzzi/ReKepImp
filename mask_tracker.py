@@ -220,7 +220,7 @@ class MaskTrackerProcess():
                 mask_rgb = np.zeros_like(rgb)
                 mask_rgb[mask>0] = [0, 255, 0]
                 bgr_image = cv2.addWeighted(bgr_image, 1, mask_rgb, 0.5, 0)
-                print(GREEN + f"[MaskTracker]: Mask {len(masks) - 1} selected." + RESET)
+                print(GREEN + f"[MaskTracker]: Mask {len(masks)} selected." + RESET)
             elif key == ord('q'):
                 cv2.destroyWindow('Maskselection')
                 break
