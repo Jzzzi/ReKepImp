@@ -39,9 +39,9 @@ def _objective(opt_vars,
     cost = 0
     # collision cost
     if collision_points_centered is not None:
-        collision_cost = 10 * calculate_collision_cost(opt_pose_homo[None], sdf_func, collision_points_centered, 0.10)
+        collision_cost = 10 * calculate_collision_cost(opt_pose_homo[None], sdf_func, collision_points_centered, 0.05)
         debug_dict['collision_cost'] = collision_cost
-        # cost += collision_cost
+        cost += collision_cost
 
     # stay close to initial pose
     # init_pose_cost = 1.0 * consistency(opt_pose_homo[None], init_pose_homo[None], rot_weight=1.5)

@@ -43,7 +43,7 @@ def objective(opt_vars,
     if collision_points_centered is not None:
         collision_cost = 10 * calculate_collision_cost(poses_homo[start_idx:end_idx], sdf_func, collision_points_centered, 0.20)
         debug_dict['collision_cost'] = collision_cost
-        # cost += collision_cost
+        cost += collision_cost
 
     # penalize path length
     pos_length, rot_length = path_length(poses_homo)

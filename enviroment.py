@@ -323,6 +323,7 @@ class RealEnviroment:
         Returns:
             bool: True if the robot is grasping the object, otherwise False.
         '''
+        print(GREEN + f"[RealEnviroment]: Checking if the robot is grasping object {candidate_obj}" + RESET)
         if self._objects_grasped[candidate_obj] == 1:
             return True
         return False
@@ -378,8 +379,10 @@ class RealEnviroment:
         '''
         self._arm.set_target_end(0.0)
         self._last_end = 0.0
+        time.sleep(1) # wait for the gripper to close
         # check whether the gripper is grasping an object
-        if (0.00 <= self._arm.get_current_end() and self._arm.get_current_end() <= 0.5):
+        if (0.1 <= self._arm.get_current_end() and self._arm.get_current_end() <= 0.5):
+            print(GREEN + f"[RealEnviroment]: Some object is grasped" + RESET)
             observation = self.observe()
             mask = observation['mask']
             points = observation['points']
@@ -397,6 +400,9 @@ class RealEnviroment:
             nearest_obj_idx = np.argmin(dist)
             self._objects_grasped = np.zeros(self._num_objects+1)
             self._objects_grasped[nearest_obj_idx + 1] = 1 # 0 meaningless, self._objects_grasped[idx] indicate whether the object idx is grasped, idx=1 is the robot
+            print(GREEN + f"[RealEnviroment]: Object {nearest_obj_idx} is grasped" + RESET)
+        else:
+            print(GREEN + f"[RealEnviroment]: No object is grasped" + RESET)
         self._last_end = 0.0
 
     def open_gripper(self):
@@ -407,6 +413,7 @@ class RealEnviroment:
             None
         '''
         self._arm.set_target_end(1.0)
+        time.sleep(0.5) # wait for the gripper to open
         self._objects_grasped = np.zeros(self._num_objects+1)
         self._last_end = 1.0
         
@@ -526,7 +533,7 @@ class RealEnviroment:
         self._keypoint_tracker.stop()
         print(GREEN + "[RealEnviroment]: RealEnviroment stopped" + RESET)
 
-    def get_sdf_voxels(self, resolution, exclude_robot=True, exclude_obj_in_hand=True):
+    def get_sdf_voxels(self, resolution, exclude_robot=True, exclude_obj_in_hand=True, threshold=0.1):
         '''
         Computes the signed distance field (SDF) voxels for the environment, with options to exclude certain objects.
         
@@ -556,7 +563,7 @@ class RealEnviroment:
         points = points.reshape(-1, 3)
         bounds = np.stack([self._bounds_min, self._bounds_max], axis=0) # [2, 3]
         # reconstruct the sdf
-        sdf = compute_sdf_gpu(points, bounds, resolution)
+        sdf = compute_sdf_gpu(points, bounds, resolution, threshold=threshold)
         # reverse the sdf so that the far the object, the lower the value
         sdf = -sdf
         return sdf

@@ -732,7 +732,7 @@ def merge_masks(masks, ratio):
     masks = [mask for mask in masks if mask.sum() > 0]
     return masks
 
-def compute_sdf_gpu(points:np.ndarray, bounds:np.ndarray, voxel_size:float, chunk_size:int=2048)->np.ndarray:
+def compute_sdf_gpu(points:np.ndarray, bounds:np.ndarray, voxel_size:float, chunk_size:int=2048, threshold:float=0.1)->np.ndarray:
     '''
     Compute signed distance field on GPU
     Args:
@@ -769,6 +769,8 @@ def compute_sdf_gpu(points:np.ndarray, bounds:np.ndarray, voxel_size:float, chun
     for i in range(0, len(grid), chunk_size):
         distances_chunk = torch.cdist(grid[i:i+chunk_size], points)
         sdf_values[i:i+chunk_size] = torch.min(distances_chunk, dim=1)[0]
+    # set the truncated threshold
+    sdf_values[sdf_values > threshold] = threshold
     sdf_values = sdf_values.cpu().numpy().reshape(shape)
 
     return sdf_values

@@ -98,8 +98,6 @@ class Main:
         self._update_stage(1)
         while True:
             observation = self._env.observe()
-            cv2.imshow('Projected', observation['projected'])
-            cv2.waitKey(1)
             self._keypoints = observation['keypoints']
             key2obj = observation['key2obj']
             for i in range(len(self._keypoints)):
@@ -118,7 +116,7 @@ class Main:
             if self._stage > 1:
                 path_constraints = self._constraint_fns[self._stage]['path']
                 for constraints in path_constraints:
-                    violation = constraints(self._keypoints[0], self._keypoints[1:])
+                    violation = constraints(self._keypoints[0], self._keypoints)
                     if violation > self._main_config['constraint_tolerance']:
                         backtrack = True
                         break
@@ -132,7 +130,7 @@ class Main:
                     # otherwise, check if all constraints are satisfied
                     all_constraints_satisfied = True
                     for constraints in path_constraints:
-                        violation = constraints(self._keypoints[0], self._keypoints[1:])
+                        violation = constraints(self._keypoints[0], self._keypoints)
                         if violation > self._main_config['constraint_tolerance']:
                             all_constraints_satisfied = False
                             break
@@ -158,21 +156,45 @@ class Main:
                     next_action = self._action_queue.pop(0)
                     precise = len(self._action_queue) == 0
                     self._env.execute_action(next_action, wait=True)
+                    observation = self._env.observe()
+                    cv2.imshow('Projected', cv2.cvtColor(observation['projected'], cv2.COLOR_RGB2BGR))
+                    cv2.waitKey(1)
                     count += 1
                 if len(self._action_queue) == 0:
                     if self._is_grasp_stage:
-                        self._execute_grasp_action()
+                        print(GREEN + "[Main]: Try to grasp" + RESET)
+                        get_goal = True
+                        # if subgoal constraint is satisfied, execute grasp action
+                        sub_goal_constraints = self._constraint_fns[self._stage]['subgoal']
+                        for constraints in sub_goal_constraints:
+                            violation = constraints(self._keypoints[0], self._keypoints)
+                            if violation > self._main_config['constraint_tolerance']:
+                                # get_goal = False
+                                break
+                        if get_goal:
+                            self._execute_grasp_action()
+                        else:
+                            continue
                     elif self._is_release_stage:
-                        self._execute_release_action()
+                        print(GREEN + "[Main]: Try to release" + RESET)
+                        # if subgoal constraint is satisfied, execute release action
+                        sub_goal_constraints = self._constraint_fns[self._stage]['subgoal']
+                        get_goal = True
+                        for constraints in sub_goal_constraints:
+                            violation = constraints(self._keypoints[0], self._keypoints)
+                            if violation > self._main_config['constraint_tolerance']:
+                                # get_goal = False
+                                break
+                        if get_goal:
+                            self._execute_release_action()
+                        else:
+                            continue
                     # if completed, save video and return
                     if self._stage == self._program_info['num_stages']: 
-                        # self._env.sleep(2.0)
-                        # save_path = self.env.save_video()
-                        # print(f"{bcolors.OKGREEN}Video saved to {save_path}\n\n{bcolors.ENDC}")
-                        print(YELLOW + "[Main]: Task completed, but Video saver not implemented" + RESET)
+                        print(GREEN + "[Main]: Task completed, but Video saver not implemented" + RESET)
                         return
                     # progress to next stage
-                    print(YELLOW + f"[Main]: progress to stage {self._stage + 1}" + RESET)
+                    print(GREEN + f"[Main]: progress to stage {self._stage + 1}" + RESET)
                     self._update_stage(self._stage + 1)
 
     def _get_next_subgoal(self, from_scratch):
@@ -262,7 +284,7 @@ if __name__ == "__main__":
     use_cached_query = False
 
     task = {
-            'instruction': 'grasp and raise up the Napkin.',
+            'instruction': 'put the cup into the pannel',
             'rekep_program_dir': '/home/liujk/ReKepImp/vlm_query/2024-11-19_19-41-04_over_lap_the_red_cup_on_the_green_cup',
     }
     instruction = task['instruction']
