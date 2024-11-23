@@ -7,7 +7,7 @@ import numpy as np
 from scipy.optimize import dual_annealing, minimize
 from scipy.interpolate import RegularGridInterpolator
 sys.path.append(os.path.dirname(__file__))
-from utils.utils import unnormalize_vars, normalize_vars, convert_pose_euler2mat, convert_pose_mat2quat, get_samples_jitted, convert_pose_quat2mat, path_length, transform_keypoints, pose2mat, euler2quat, farthest_point_sampling, get_linear_interpolation_steps, linear_interpolate_poses, convert_pose_euler2quat, quat2euler, get_callable_grasping_cost_fn, GREEN, RESET
+from utils.utils import unnormalize_vars, normalize_vars, convert_pose_euler2mat, convert_pose_mat2quat, get_samples_jitted, convert_pose_quat2mat, path_length, transform_keypoints, pose2mat, euler2quat, farthest_point_sampling, get_linear_interpolation_steps, linear_interpolate_poses, convert_pose_euler2quat, quat2euler, get_callable_grasping_cost_fn, GREEN, RESET,calculate_collision_cost
 # ====================================
 # = objective function
 # ====================================
@@ -22,9 +22,6 @@ def objective(opt_vars,
                 opt_interpolate_rot_step_size,
                 sdf_func = None,
                 collision_points_centered = None,
-                ik_solver = None,
-                initial_joint_pos = None,
-                reset_joint_pos = None,
                 return_debug_dict=False):
 
     debug_dict = {}
@@ -43,17 +40,17 @@ def objective(opt_vars,
 
     cost = 0
     # collision cost
-    # if collision_points_centered is not None:
-    #     collision_cost = 0.5 * calculate_collision_cost(poses_homo[start_idx:end_idx], sdf_func, collision_points_centered, 0.20)
-    #     debug_dict['collision_cost'] = collision_cost
-    #     cost += collision_cost
+    if collision_points_centered is not None:
+        collision_cost = 10 * calculate_collision_cost(poses_homo[start_idx:end_idx], sdf_func, collision_points_centered, 0.20)
+        debug_dict['collision_cost'] = collision_cost
+        # cost += collision_cost
 
     # penalize path length
     pos_length, rot_length = path_length(poses_homo)
     approx_length = pos_length + rot_length * 1.0
     path_length_cost = 4.0 * approx_length
     debug_dict['path_length_cost'] = path_length_cost
-    # cost += path_length_cost
+    cost += path_length_cost
 
     # reachability cost
     # ik_cost = 0
@@ -136,7 +133,7 @@ class PathSolver:
         path_constraints = []
         sdf_voxels = np.zeros((10, 10, 10))
         collision_points = np.random.rand(100, 3)
-        self.solve(start_pose, end_pose, keypoints, keypoint_movable_mask, path_constraints, sdf_voxels, collision_points, None, from_scratch=True)
+        self.solve(start_pose, end_pose, keypoints, keypoint_movable_mask, path_constraints, sdf_voxels, collision_points, from_scratch=True)
         self._last_opt_result = None
 
     def _setup_sdf(self, sdf_voxels):
@@ -178,7 +175,6 @@ class PathSolver:
             path_constraints,
             sdf_voxels,
             collision_points,
-            initial_joint_pos,
             from_scratch=False):
         """
         Args:
@@ -258,8 +254,8 @@ class PathSolver:
                     path_constraints,
                     self._config['opt_interpolate_pos_step_size'],
                     self._config['opt_interpolate_rot_step_size'],
-                    # sdf_func,
-                    # collision_points_centered,
+                    sdf_func,
+                    collision_points_centered,
                     # self._ik_solver,
                     # initial_joint_pos,
                     # self._reset_joint_pos)

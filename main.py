@@ -29,7 +29,7 @@ class Main:
         # constraint generator
         self._constraint_generator = ConstraintGenerator(self._global_config['constraint_generator'])
         # initialize environment
-        self._env = RealEnviroment(self._global_config)
+        self._env = RealEnviroment(self._global_config, visualize=True)
 
         # initialize solvers
         self._subgoal_solver = SubgoalSolver(self._global_config['subgoal_solver'])
@@ -50,7 +50,9 @@ class Main:
         # ====================================
         try:
             if rekep_program_dir is None:
-                keypoints, projected_img = self._env.get_keypoints()
+                observation = self._env.observe()
+                keypoints = observation['keypoints']
+                projected_img = observation['projected']
                 #     self.visualizer.show_img(projected_img)
                 metadata = {'init_keypoint_positions': keypoints, 'num_keypoints': len(keypoints)}
                 rekep_program_dir = self._constraint_generator.generate(projected_img, instruction, metadata)
@@ -59,7 +61,8 @@ class Main:
             # = execute
             # ====================================
             self._execute(rekep_program_dir, disturbance_seq)
-        except:
+        except Exception as e:
+            print(f"{RED}[Main]: {e}{RESET}")
             self._env.stop()
         self._env.stop()
 
@@ -94,12 +97,20 @@ class Main:
         self._last_sim_step_counter = -np.inf
         self._update_stage(1)
         while True:
-            self._keypoints, _ = self._env.get_keypoints()  # first keypoint is always the ee
+            observation = self._env.observe()
+            cv2.imshow('Projected', observation['projected'])
+            cv2.waitKey(1)
+            self._keypoints = observation['keypoints']
+            key2obj = observation['key2obj']
+            for i in range(len(self._keypoints)):
+                obj = key2obj[i]
+                if self._env._objects_grasped[obj]:
+                    self._keypoint_movable_mask[i] = False
             self._curr_ee_pose = self._env.get_ee_pose()
             self._curr_joint_pos = self._env.get_arm_joint_postions()
             self._sdf_voxels = self._env.get_sdf_voxels(self._main_config['sdf_voxel_size'])
             self._collision_points = self._env.get_collision_points()
-            print(GREEN + f"[Main]: stage {self._stage}" + RESET)
+            print(GREEN + f"[Main]: Stage {self._stage}" + RESET)
             # ====================================
             # = decide whether to backtrack
             # ====================================
@@ -130,17 +141,10 @@ class Main:
                 print(YELLOW + f"[Main]: backtrack to stage {new_stage}" + RESET)
                 self._update_stage(new_stage)
             else:
-                # apply disturbance
-                # self._update_disturbance_seq(self._stage, disturbance_seq)
-                # ====================================
-                # = get optimized plan
-                # ====================================
-                # if self._last_sim_step_counter == self._env.step_counter:
-                #     print(YELLOW + f"[Main]: sim did not step forward within last iteration (HINT: adjust action_steps_per_iter to be larger or the pos_threshold to be smaller" + RESET)
                 next_subgoal = self._get_next_subgoal(from_scratch=self._first_iter)
-                # print(GREEN + f"[Main]: Get next subgoal." + RESET)
+                print(GREEN + f"[Main]: Get next subgoal." + RESET)
                 next_path = self._get_next_path(next_subgoal, from_scratch=self._first_iter)
-                # print(GREEN + f"[Main]: Get next path." + RESET)
+                print(GREEN + f"[Main]: Get next path." + RESET)
                 self._first_iter = False
                 self._action_queue = next_path.tolist()
                 self._last_sim_step_counter = self._env._step_counter
@@ -182,7 +186,6 @@ class Main:
                                                             self._sdf_voxels,
                                                             self._collision_points,
                                                             self._is_grasp_stage,
-                                                            self._curr_joint_pos,
                                                             from_scratch=from_scratch)
         subgoal_pose_homo = convert_pose_quat2mat(subgoal_pose)
         # if grasp stage, back up a bit to leave room for grasping
@@ -203,7 +206,6 @@ class Main:
                                                     path_constraints,
                                                     self._sdf_voxels,
                                                     self._collision_points,
-                                                    self._curr_joint_pos,
                                                     from_scratch=from_scratch)
         print_opt_debug_dict(debug_dict)
         processed_path = self._process_path(path)
@@ -241,6 +243,7 @@ class Main:
         # update keypoint movable mask
         self._update_keypoint_movable_mask()
         self._first_iter = True
+        print(GREEN + f"[Main]: stage {self._stage} started" + RESET)
 
     def _update_keypoint_movable_mask(self):
         for i in range(1, len(self._keypoint_movable_mask)):  # first keypoint is ee so always movable
@@ -248,11 +251,7 @@ class Main:
             self._keypoint_movable_mask[i] = self._env.is_grasping(keypoint_object)
 
     def _execute_grasp_action(self):
-        pregrasp_pose = self._env.get_ee_pose()
-        grasp_pose = pregrasp_pose.copy()
-        grasp_pose[:3] += quat2mat(pregrasp_pose[3:]) @ np.array([self._main_config['grasp_depth'], 0, 0])
-        grasp_action = np.concatenate([grasp_pose, [self._env.get_gripper_close_action()]])
-        self._env.execute_action(grasp_action, precise=True)
+        self._env.close_gripper()
         time.sleep(0.5)
     
     def _execute_release_action(self):
@@ -263,7 +262,7 @@ if __name__ == "__main__":
     use_cached_query = False
 
     task = {
-            'instruction': 'overlap 2 cups',
+            'instruction': 'grasp and raise up the Napkin.',
             'rekep_program_dir': '/home/liujk/ReKepImp/vlm_query/2024-11-19_19-41-04_over_lap_the_red_cup_on_the_green_cup',
     }
     instruction = task['instruction']

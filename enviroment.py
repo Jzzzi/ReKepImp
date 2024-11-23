@@ -54,10 +54,15 @@ class RealEnviroment:
         self._instrinsics = None
         self._extrinsics = None
 
+        # create a cv2 window
+
     def _update(self, stop_event):
+        print(GREEN + "[RealEnviroment]: Update thread started" + RESET)
         while not stop_event.is_set():
             self.observe(update_only=True)
-            time.sleep(0.1)
+            time.sleep(0.5)
+        print(GREEN + "[RealEnviroment]: Update thread stopped" + RESET)
+
 
     def start(self):
         # Initialize the arm
@@ -100,7 +105,7 @@ class RealEnviroment:
 
         self._stop_event = threading.Event()
         self._update_thread = threading.Thread(target=self._update, args=(self._stop_event,))
-        self._update_thread.start()
+        # self._update_thread.start()
         print(GREEN + "[RealEnviroment]: RealEnviroment started" + RESET)
     
     def observe(self, update_only = False)->Union[Dict, None]:
@@ -277,21 +282,26 @@ class RealEnviroment:
         points = observation['points']
         mask = observation['mask']
         hand_object_idx = np.where(self._objects_grasped == 1)[0]
-        collision_points = []
+        ee_points = self.get_ee_pos().reshape(1, 3)
+        ee_mat = quat2mat(self.get_ee_quat())
+        ee_mat_inv = ee_mat.T
+        upper = np.array([0, 0, 0.03]).reshape(1, 3) + ee_points
+        lower = np.array([0, 0, -0.03]).reshape(1, 3) + ee_points
+        # rotate with ee
+        upper = np.dot(ee_mat_inv, upper.T).T # [1, 3]
+        lower = np.dot(ee_mat_inv, lower.T).T
+        # copy along the first index
+        upper = np.tile(upper, (25, 1)) # sample 25 points around the ee # [25, 3]
+        lower = np.tile(lower, (25, 1))
+        collision_points = np.concatenate([upper, lower], axis=0).reshape(-1, 3)
+
         for idx in hand_object_idx:
             obj_mask = (mask == idx)
             obj_points = points[obj_mask]
             # downsample to 500
-            if obj_points.shape[0] > 500:
-                obj_points = obj_points[np.random.choice(obj_points.shape[0], 500, replace=False)]
-            collision_points.append(obj_points)
-        collision_points = np.concatenate(collision_points, axis=0) # [N, 3]
-        ee_points = self.get_ee_pos().reshape(1, 3)
-        # sample 100 points around the ee
-        if noise:
-            noise = np.random.normal(0, 0.02, (100, 3))
-            ee_points = np.concatenate([ee_points] * 100, axis=0) + noise
-        collision_points = np.concatenate([collision_points, ee_points], axis=0)
+            if obj_points.shape[0] > 50:
+                obj_points = obj_points[np.random.choice(obj_points.shape[0], 50, replace=False)].reshape(-1, 3)
+            collision_points = np.concatenate([collision_points, obj_points], axis=0).reshape(-1, 3)
         return collision_points
 
     def reset(self):
@@ -509,8 +519,8 @@ class RealEnviroment:
         Terminate all processes and threads.
         '''
         # stop the update thread
-        self._stop_event.set()
-        self._update_thread.join()
+        # self._stop_event.set()
+        # self._update_thread.join()
         self._rs.stop()
         self._mask_tracker.stop()
         self._keypoint_tracker.stop()

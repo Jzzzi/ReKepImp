@@ -8,11 +8,13 @@ from scipy.optimize import dual_annealing, minimize
 from scipy.interpolate import RegularGridInterpolator
 
 sys.path.append(os.path.dirname(__file__))
-from utils.utils import unnormalize_vars, normalize_vars, pose2mat, euler2quat, consistency, transform_keypoints, farthest_point_sampling, quat2euler, get_callable_grasping_cost_fn, GREEN, RESET
+from utils.utils import unnormalize_vars, normalize_vars, pose2mat, euler2quat, consistency, transform_keypoints, farthest_point_sampling, quat2euler, get_callable_grasping_cost_fn, GREEN, RESET, calculate_collision_cost
 def _objective(opt_vars,
             bounds,
             keypoints_centered,
             keypoint_movable_mask,
+            collision_points_centered,
+            sdf_func,
             goal_constraints,
             path_constraints,
             init_pose_homo,
@@ -36,15 +38,15 @@ def _objective(opt_vars,
 
     cost = 0
     # collision cost
-    # if collision_points_centered is not None:
-    #     collision_cost = 0.8 * calculate_collision_cost(opt_pose_homo[None], sdf_func, collision_points_centered, 0.10)
-    #     debug_dict['collision_cost'] = collision_cost
-    #     cost += collision_cost
+    if collision_points_centered is not None:
+        collision_cost = 10 * calculate_collision_cost(opt_pose_homo[None], sdf_func, collision_points_centered, 0.10)
+        debug_dict['collision_cost'] = collision_cost
+        # cost += collision_cost
 
     # stay close to initial pose
-    init_pose_cost = 1.0 * consistency(opt_pose_homo[None], init_pose_homo[None], rot_weight=1.5)
-    debug_dict['init_pose_cost'] = init_pose_cost
-    cost += init_pose_cost
+    # init_pose_cost = 1.0 * consistency(opt_pose_homo[None], init_pose_homo[None], rot_weight=1.5)
+    # debug_dict['init_pose_cost'] = init_pose_cost
+    # cost += init_pose_cost
 
     # reachability cost (approximated by number of IK iterations + regularization from reset joint pos)
     # max_iterations = 20
@@ -71,7 +73,7 @@ def _objective(opt_vars,
     if is_grasp_stage:
         preferred_dir = np.array([0, 0, -1]) 
         grasp_cost = -np.dot(opt_pose_homo[:3, 0], preferred_dir) + 1  # [0, 1]
-        grasp_cost = 10.0 * grasp_cost
+        grasp_cost = 20.0 * grasp_cost
         debug_dict['grasp_cost'] = grasp_cost
         cost += grasp_cost
 
@@ -137,7 +139,7 @@ class SubgoalSolver:
         path_constraints = []
         sdf_voxels = np.zeros((10, 10, 10))
         collision_points = np.random.rand(100, 3)
-        self.solve(ee_pose, keypoints, keypoint_movable_mask, goal_constraints, path_constraints, sdf_voxels, collision_points, True, None, from_scratch=True)
+        self.solve(ee_pose, keypoints, keypoint_movable_mask, goal_constraints, path_constraints, sdf_voxels, collision_points, True, from_scratch=True)
         self._last_opt_result = None
 
     def _setup_sdf(self, sdf_voxels):
@@ -191,6 +193,8 @@ class SubgoalSolver:
             keypoint_movable_mask,
             goal_constraints,
             path_constraints,
+            sdf_voxels,
+            collision_points,
             is_grasp_stage,
             from_scratch=False,
             ):
@@ -213,6 +217,7 @@ class SubgoalSolver:
         # downsample collision points
         if collision_points is not None and collision_points.shape[0] > self._config['max_collision_points']:
             collision_points = farthest_point_sampling(collision_points, self._config['max_collision_points'])
+        sdf_func = self._setup_sdf(sdf_voxels)
         # ====================================
         # = setup bounds and initial guess
         # ====================================
@@ -242,6 +247,8 @@ class SubgoalSolver:
         aux_args = (bounds,
                     keypoints_centered,
                     keypoint_movable_mask,
+                    collision_points_centered,
+                    sdf_func,
                     goal_constraints,
                     path_constraints,
                     ee_pose_homo,

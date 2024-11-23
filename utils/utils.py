@@ -250,12 +250,14 @@ def batch_transform_points(points, transforms):
 
 def calculate_collision_cost(poses, sdf_func, collision_points, threshold):
     assert poses.shape[1:] == (4, 4)
+    points_num = collision_points.shape[0]
     transformed_pcs = batch_transform_points(collision_points, poses)
     transformed_pcs_flatten = transformed_pcs.reshape(-1, 3)  # [num_poses * num_points, 3]
     signed_distance = sdf_func(transformed_pcs_flatten) + threshold  # [num_poses * num_points]
     signed_distance = signed_distance.reshape(-1, collision_points.shape[0])  # [num_poses, num_points]
     non_zero_mask = signed_distance > 0
     collision_cost = np.sum(signed_distance[non_zero_mask])
+    collision_cost = collision_cost / points_num
     return collision_cost
 
 def euler2mat(euler):

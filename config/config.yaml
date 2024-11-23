@@ -73,22 +73,22 @@ constraint_generator:
   max_tokens: 2048
 
 main:
-  interpolate_pos_step_size: 0.02  # controls the density of the final returned path
-  interpolate_rot_step_size: 0.10  # about 20 degrees
-  grasp_depth: 0.05
+  interpolate_pos_step_size: 0.05  # controls the density of the final returned path
+  interpolate_rot_step_size: 0.34  # about 20 degrees
+  grasp_depth: 0.01
   constraint_tolerance: 0.10  # for backtracking
   bounds_min: *bounds_min
   bounds_max: *bounds_max
   sdf_voxel_size: 0.01
   vlm_camera: 0
-  action_steps_per_iter: 5
+  action_steps_per_iter: 40
   seed: *seed
 
 path_solver:
   opt_pos_step_size: 0.20  # controls the density of control points in the path
   opt_rot_step_size: 0.78  # controls the density of control points in the path
-  opt_interpolate_pos_step_size: 0.02  # controls the density of collision checking inside optimization
-  opt_interpolate_rot_step_size: 0.10
+  opt_interpolate_pos_step_size: 0.05  # controls the density of collision checking inside optimization
+  opt_interpolate_rot_step_size: 0.34
   max_collision_points: 60
   sampling_maxfun: 5000
   bounds_min: *bounds_min
