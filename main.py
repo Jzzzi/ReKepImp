@@ -284,7 +284,7 @@ if __name__ == "__main__":
     use_cached_query = False
 
     task = {
-            'instruction': 'put the cup into the pannel',
+            'instruction': 'grasp the adhesive tape and raise up',
             'rekep_program_dir': '/home/liujk/ReKepImp/vlm_query/2024-11-19_19-41-04_over_lap_the_red_cup_on_the_green_cup',
     }
     instruction = task['instruction']
