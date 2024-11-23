@@ -29,6 +29,10 @@ def visualize_points(points, colors):
     vis.add_geometry(point_cloud)
     o3d.visualization.draw_geometries([point_cloud])
 
+    view_control = vis.get_view_control()
+    view_control.set_lookat([0, 0, 0])
+    # save points cloud
+    o3d.io.write_point_cloud("./data/point_cloud.ply", point_cloud)
     return vis, point_cloud
 
 if __name__ == "__main__":
@@ -38,7 +42,7 @@ if __name__ == "__main__":
     rw.reset()
     # rw.register_keypoints()
     step = 0
-    rw.execute_action(actions[2], wait=True)
+    # rw.execute_action(actions[2], wait=True)
 
     vis = None
     point_cloud = None
@@ -60,7 +64,7 @@ if __name__ == "__main__":
                 vis.update_renderer()
         except KeyboardInterrupt:
             break
-    rw.execute_action([0, 0, 0.4, 0, 0, 0, 1, 0], wait=True)
+    # rw.execute_action([0, 0, 0.4, 0, 0, 0, 1, 0], wait=True)
     rw.stop()
     # rs = RealSense(config['realsense'])
     # rs.start()
